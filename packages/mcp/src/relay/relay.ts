@@ -24,6 +24,7 @@ import {
 import { WebSocketServer, type WebSocket } from 'ws';
 
 import { isAllowedHost, isAllowedWsOrigin } from '../local-access.js';
+import type { PluginSessionInfo } from '../routing/sessions.js';
 import { DEFAULT_DISCONNECT_GRACE_MS, type Session, SessionManager } from './session.js';
 
 export interface RelayOptions {
@@ -125,7 +126,7 @@ export class Relay {
      *   calls to plugins on different builds cannot read each other's answer.
      * - Invoking it _here_ rather than from the socket handler is what lets the caller attribute the
      *   result at all. The handler runs in the socket's async context, so anything context-scoped a
-     *   caller set up (`captureSkew`) is invisible from there — a callback fired at that point
+     *   caller set up (`captureNotices`) is invisible from there — a callback fired at that point
      *   reaches nobody, which is precisely what shipped until an end-to-end test caught it.
      */
     onServed?: (servingSessionId: string | undefined) => void,
@@ -274,6 +275,27 @@ export class Relay {
       if (best === undefined || s.lastActivityAt > best.lastActivityAt) best = s;
     }
     return best;
+  }
+
+  /**
+   * Every connected session, newest activity first, in the shape both roles answer with.
+   *
+   * The leader reads it straight off its own records; a follower gets the identical list back from
+   * `/ping`. It has to be the same shape on both sides because file targeting compares names and
+   * ids across processes — a follower that saw a different list could bind to a session the leader
+   * would resolve differently.
+   */
+  listSessionInfo(): readonly PluginSessionInfo[] {
+    return this.sessions
+      .connected()
+      .toSorted((a, b) => b.lastActivityAt - a.lastActivityAt)
+      .map(s => ({
+        id: s.id,
+        fileName: s.fileName,
+        pageName: s.pageName,
+        lastActivityAt: s.lastActivityAt,
+        pluginVersion: s.clientVersion,
+      }));
   }
 
   /**
@@ -445,6 +467,9 @@ export class Relay {
       serverVersion: this.opts.serverVersion,
       protocolVersion: PROTOCOL_VERSION,
       sessionResumed: resumed,
+      // This server separates "which file is this?" from "should this file win routing?", so a
+      // background tab is safe to announce itself. See handleEnvelope's $activity branch.
+      foregroundFlag: true,
       ...(compatible
         ? {}
         : { skewNotice: pluginSkewNotice(parsed.data.clientVersion, this.opts.serverVersion) }),
@@ -461,14 +486,19 @@ export class Relay {
     // replies and tool responses must NOT bump lastActivityAt — both fire on a timer / on
     // server-initiated calls and would race the two sessions to a coin flip every 15s.
     if (env.kind === 'evt' && env.method === SystemMethod.Activity) {
-      session.lastActivityAt = Date.now();
       const parsed = ActivityParamsSchema.safeParse(env.params);
       if (parsed.success) {
-        // Params carry the current file/page so `ping` can advertise it; routing decision and
-        // user-facing label come off the same event.
+        // Identity is recorded unconditionally — knowing which file a session is in is never
+        // something a background tab should be denied, and `use_file` needs it to match a name.
         session.fileName = parsed.data.fileName;
         session.pageId = parsed.data.pageId;
         session.pageName = parsed.data.pageName;
+      }
+      // Routing is not. Only the tab the user is actually looking at may claim it; a background tab
+      // that bumped this would pull the agent out of the file the user is in. A plugin that predates
+      // the flag omits it, and only ever emitted from a visible tab, so absent means foreground.
+      if (!parsed.success || parsed.data.foreground !== false) {
+        session.lastActivityAt = Date.now();
       }
       return;
     }

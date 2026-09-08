@@ -1,11 +1,19 @@
 import { ErrorCode, type RpcResponse } from '@figwright/shared';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { DispatchError, dispatchTool, resolveRoutingSession } from '../src/dispatch.js';
+import {
+  DispatchError,
+  dispatchTargeted,
+  dispatchTool,
+  resetRoutingNoticeCache,
+  resolveRoutingSession,
+} from '../src/dispatch.js';
 import type { Follower } from '../src/election/follower.js';
 import { portConflictMessage } from '../src/election/leader-lock.js';
 import { type Node, NodeRole } from '../src/election/node.js';
-import { captureSkew } from '../src/tools/skew-notice.js';
+import type { PluginSessionInfo } from '../src/routing/sessions.js';
+import { clearFileTarget, setFileTarget } from '../src/routing/target.js';
+import { captureNotices, withRoutingNotice } from '../src/tools/notices.js';
 
 const makeNode = (overrides: Partial<Node>): Node =>
   ({
@@ -239,13 +247,13 @@ describe('dispatchTool', () => {
     });
     let seen: string | null = null;
 
-    await captureSkew(
+    await captureNotices(
       async () => {
         await dispatchTool({ node, follower: makeFollower({}) }, 'set_fills', {});
         return { content: [] };
       },
-      (result, notice) => {
-        seen = notice;
+      (result, notices) => {
+        seen = notices.skew;
         return result;
       },
     );
@@ -269,13 +277,13 @@ describe('dispatchTool', () => {
     });
     let seen: string | null = null;
 
-    await captureSkew(
+    await captureNotices(
       async () => {
         await dispatchTool({ node, follower }, 'set_fills', {});
         return { content: [] };
       },
-      (result, notice) => {
-        seen = notice;
+      (result, notices) => {
+        seen = notices.skew;
         return result;
       },
     );
@@ -290,13 +298,13 @@ describe('dispatchTool', () => {
     });
     let seen: string | null = 'unset';
 
-    await captureSkew(
+    await captureNotices(
       async () => {
         await dispatchTool({ node, follower }, 'set_fills', {});
         return { content: [] };
       },
-      (result, notice) => {
-        seen = notice;
+      (result, notices) => {
+        seen = notices.skew;
         return result;
       },
     );
@@ -482,5 +490,204 @@ describe('resolveRoutingSession', () => {
     const node = makeNode({ isLeader: () => false, getLeader: () => null });
     const follower = makeFollower({ resolveActiveSession: async () => 'remote-sess' });
     expect(await resolveRoutingSession({ node, follower })).toBe('remote-sess');
+  });
+});
+
+describe('dispatchTargeted', () => {
+  const info = (id: string, fileName: string): PluginSessionInfo => ({
+    id,
+    fileName,
+    pageName: 'Page 1',
+    lastActivityAt: 1,
+    pluginVersion: '0.5.0',
+  });
+
+  /** A leader whose relay refuses any session id but `live`, the way the real one does. */
+  const leaderServing = (
+    live: string,
+    sessions: readonly PluginSessionInfo[],
+    seen: string[],
+  ): Node =>
+    makeNode({
+      isLeader: () => true,
+      getLeader: () =>
+        ({
+          relay: {
+            skewNotice: () => null,
+            listSessionInfo: () => sessions,
+            sendRequest: async (
+              name: string,
+              _args: unknown,
+              _timeout: number,
+              sessionId?: string,
+            ) => {
+              seen.push(`${name}:${sessionId ?? '(unpinned)'}`);
+              if (sessionId !== undefined && sessionId !== live) {
+                throw new Error(`pinned session not connected (sessionId=${sessionId}, method=t)`);
+              }
+              // The probing source asks each session which file it is in.
+              if (name === 'list_files') {
+                return {
+                  files: [
+                    {
+                      fileKey: null,
+                      fileName: sessions.find(x => x.id === sessionId)?.fileName ?? null,
+                      currentPage: { id: 'p', name: 'Page 1' },
+                    },
+                  ],
+                };
+              }
+              return { served: sessionId };
+            },
+          },
+          http: undefined as never,
+          port: 0,
+        }) as unknown as ReturnType<Node['getLeader']>,
+    });
+
+  afterEach(() => {
+    clearFileTarget();
+  });
+
+  it('dispatches unpinned when no file is claimed', async () => {
+    // The single-agent default: this wrapper must be invisible until someone claims a file.
+    const seen: string[] = [];
+    const node = leaderServing('s-1', [info('s-1', 'Brand')], seen);
+    await dispatchTargeted({ node, follower: makeFollower({}) }, 't', {});
+    expect(seen).toEqual(['t:(unpinned)']);
+  });
+
+  it('pins straight to the claimed session without a liveness round-trip first', async () => {
+    // Checking up front would cost every call an extra /ping on the follower path; the relay
+    // already refuses a dead pin for free, so the check happens only when it fires.
+    const seen: string[] = [];
+    const node = leaderServing('s-2', [info('s-2', 'Marketing')], seen);
+    setFileTarget({ sessionId: 's-2', fileName: 'Marketing' });
+    await dispatchTargeted({ node, follower: makeFollower({}) }, 't', {});
+    // Exactly one dispatch: no liveness check, no list_files fan-out.
+    expect(seen).toEqual(['t:s-2']);
+  });
+
+  it('recovers the claim by file name when the panel was reopened, then retries', async () => {
+    const seen: string[] = [];
+    // The old session is gone; the same file is back under a new id.
+    const node = leaderServing('s-9', [info('s-9', 'Marketing')], seen);
+    setFileTarget({ sessionId: 's-2', fileName: 'Marketing' });
+    const result = await dispatchTargeted({ node, follower: makeFollower({}) }, 't', {});
+    // The refusal is what triggers the probe: the plugins are asked their names only then, because
+    // the relay's cached names are empty for a session that has just reconnected.
+    expect(seen).toEqual(['t:s-2', 'list_files:s-9', 't:s-9']);
+    expect(result).toEqual({ served: 's-9' });
+  });
+
+  it('fails rather than falling back to another file when the claim cannot be recovered', async () => {
+    // The bug this whole feature exists to prevent: answering with somebody else's nodes.
+    const seen: string[] = [];
+    const node = leaderServing('s-3', [info('s-3', 'Brand')], seen);
+    setFileTarget({ sessionId: 's-2', fileName: 'Marketing' });
+    await expect(dispatchTargeted({ node, follower: makeFollower({}) }, 't', {})).rejects.toThrow(
+      /"Marketing" is no longer connected/,
+    );
+    // It probed, found only another file, and refused rather than serving that one.
+    expect(seen).toEqual(['t:s-2', 'list_files:s-3']);
+  });
+});
+
+describe('ambiguous-routing notice', () => {
+  const info = (id: string, fileName: string): PluginSessionInfo => ({
+    id,
+    fileName,
+    pageName: 'Page 1',
+    lastActivityAt: 1,
+    pluginVersion: '0.5.0',
+  });
+
+  const leaderWith = (sessions: readonly PluginSessionInfo[]): Node =>
+    makeNode({
+      isLeader: () => true,
+      getLeader: () =>
+        ({
+          relay: {
+            skewNotice: () => null,
+            listSessionInfo: () => sessions,
+            pickActiveSessionId: () => sessions[0]?.id,
+            sendRequest: async () => ({ ok: true }),
+          },
+          http: undefined as never,
+          port: 0,
+        }) as unknown as ReturnType<Node['getLeader']>,
+    });
+
+  /** Run one dispatch with notice capture armed and return the text appended to the result. */
+  const noticeFrom = async (run: () => Promise<unknown>): Promise<string> => {
+    const result = await captureNotices(
+      async () => {
+        await run();
+        return { content: [{ type: 'text' as const, text: '{}' }] };
+      },
+      // The same composition index.ts applies, so what this reads is what an agent would.
+      (r, notices) => withRoutingNotice(r, notices.routing),
+    );
+    return result.content.map(c => (c.type === 'text' ? c.text : '')).join('');
+  };
+
+  beforeEach(() => {
+    resetRoutingNoticeCache();
+    clearFileTarget();
+  });
+
+  afterEach(() => {
+    clearFileTarget();
+  });
+
+  it('warns when two files are open and nothing is claimed', async () => {
+    const node = leaderWith([info('s-1', 'Brand'), info('s-2', 'Marketing')]);
+    const text = await noticeFrom(() =>
+      dispatchTargeted({ node, follower: makeFollower({}) }, 't', {}),
+    );
+    expect(text).toContain('MORE THAN ONE FIGMA FILE IS OPEN');
+    expect(text).toContain('Brand');
+    expect(text).toContain('Marketing');
+    expect(text).toContain('use_file');
+  });
+
+  it('says nothing when only one file is open', async () => {
+    // The common case, and the one that must stay free of noise.
+    const node = leaderWith([info('s-1', 'Brand')]);
+    const text = await noticeFrom(() =>
+      dispatchTargeted({ node, follower: makeFollower({}) }, 't', {}),
+    );
+    expect(text).not.toContain('MORE THAN ONE');
+  });
+
+  it('says nothing once a file is claimed', async () => {
+    const node = leaderWith([info('s-1', 'Brand'), info('s-2', 'Marketing')]);
+    setFileTarget({ sessionId: 's-2', fileName: 'Marketing' });
+    const text = await noticeFrom(() =>
+      dispatchTargeted({ node, follower: makeFollower({}) }, 't', {}),
+    );
+    expect(text).not.toContain('MORE THAN ONE');
+  });
+
+  it('warns on the multi-call path too, which pins even when unclaimed', async () => {
+    // component_map and icon_map resolve one session up front so their sub-calls stay together, so
+    // they never reach the unclaimed branch of dispatchTargeted — and they are the tools whose
+    // output is most expensive to have built on the wrong file.
+    const node = leaderWith([info('s-1', 'Brand'), info('s-2', 'Marketing')]);
+    const text = await noticeFrom(() =>
+      resolveRoutingSession({ node, follower: makeFollower({}) }),
+    );
+    expect(text).toContain('MORE THAN ONE FIGMA FILE IS OPEN');
+  });
+
+  it('names a session that has not reported its file yet', async () => {
+    const node = leaderWith([
+      info('s-1', 'Brand'),
+      { ...info('s-2', 'x'), fileName: null } as PluginSessionInfo,
+    ]);
+    const text = await noticeFrom(() =>
+      dispatchTargeted({ node, follower: makeFollower({}) }, 't', {}),
+    );
+    expect(text).toContain('(unnamed, session s-2)');
   });
 });
