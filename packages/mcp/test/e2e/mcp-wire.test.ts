@@ -371,6 +371,70 @@ describe.skipIf(!existsSync(DIST_ENTRY))('MCP wire contract (built dist)', () =>
     }
   }, 30_000);
 
+  it('carries raw Motion through the built server untouched, fields it has never seen included', async () => {
+    // The inventory's contract is that nothing between the Figma API and the agent reshapes Motion
+    // data. Every hop — msgpack, the relay, the SDK's result handling — is real here, so a
+    // schema-driven strip or a lossy re-encode anywhere on the way would show up as a diff.
+    const inventory = {
+      rootNodeId: '1:1',
+      coverage: { status: 'partial', visitedNodes: 3, animatedNodes: 1, reasons: ['read-error'] },
+      diagnostics: [{ nodeId: '1:3', code: 'read-error', message: 'getter exploded' }],
+      nodes: [
+        {
+          nodeId: 'I1:2;4:5',
+          parentId: '1:2',
+          name: 'Card title',
+          type: 'TEXT',
+          motion: {
+            animationStyles: [],
+            animations: {
+              OPACITY: {
+                baseValue: { type: 'FLOAT', value: 0 },
+                timelineDuration: 4,
+                loopMode: 'PING_PONG',
+                tracks: [
+                  {
+                    id: 't',
+                    keyframeOperation: 'SET',
+                    keyframes: [
+                      { id: 'a', timelinePosition: 1, value: { type: 'FLOAT', value: 0 } },
+                      { id: 'b', timelinePosition: 1.25, value: { type: 'FLOAT', value: 1 } },
+                    ],
+                  },
+                ],
+              },
+              effects: { 1: { RADIUS: { tracks: [] } } },
+            },
+            manualKeyframeTracks: {},
+            timelines: [{ id: 'T:1', duration: 4, trigger: 'ON_LOAD' }],
+          },
+        },
+      ],
+    };
+    const server = new WireClient();
+    await server.start();
+    await server.handshake(LATEST_CLIENT_PROTOCOL);
+    const plugin = await connectFakePlugin({
+      port: server.port,
+      handlers: { get_motion_context: () => inventory },
+    });
+
+    try {
+      const res = await server.send('tools/call', {
+        name: 'get_motion_context',
+        arguments: { nodeId: '1:1' },
+      });
+      const content = res.result?.content as { type: string; text: string }[];
+
+      expect(res.result?.isError).toBeUndefined();
+      expect(content).toHaveLength(1);
+      expect(JSON.parse(content[0]?.text ?? '{}')).toEqual(inventory);
+    } finally {
+      closeSocket(plugin);
+      await server.stop();
+    }
+  }, 30_000);
+
   it('surfaces a bad-argument call as a tool error the model can read, not a transport failure', async () => {
     const res = await client.send('tools/call', {
       name: 'get_node',

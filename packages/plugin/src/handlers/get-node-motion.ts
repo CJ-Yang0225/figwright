@@ -1,7 +1,7 @@
-import type { GetNodeMotionResult, NodeMotion } from '@figwright/shared';
+import type { GetNodeMotionResult } from '@figwright/shared';
 
 import type { SandboxToolHandler } from '../dispatcher.js';
-import { isMotionNode, readPlayheadPosition, toPlainJson } from './motion-shared.js';
+import { isMotionNode, readNodeMotion, readPlayheadPosition } from './motion-shared.js';
 
 /**
  * Read a node's Motion state (applied styles, animations, manual keyframe tracks, timelines). Reads
@@ -23,13 +23,7 @@ export const createGetNodeMotionHandler =
       if (playheadPosition !== undefined) miss.playheadPosition = playheadPosition;
       return miss;
     }
-    const motion: NodeMotion = {
-      animationStyles: toPlainJson(node.animationStyles) as unknown[],
-      animations: toPlainJson(node.animations) as Record<string, unknown>,
-      manualKeyframeTracks: toPlainJson(node.manualKeyframeTracks) as Record<string, unknown>,
-      timelines: node.timelines.map(t => ({ id: t.id, duration: t.duration })),
-    };
-    const result: GetNodeMotionResult = { nodeId: node.id, motion };
+    const result: GetNodeMotionResult = { nodeId: node.id, motion: readNodeMotion(node) };
     if (playheadPosition !== undefined) result.playheadPosition = playheadPosition;
     return result;
   };

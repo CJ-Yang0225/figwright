@@ -52,6 +52,7 @@ import { getDocumentTool } from './get-document.js';
 import { getFontsTool } from './get-fonts.js';
 import { getLocalComponentsTool } from './get-local-components.js';
 import { getMetadataTool } from './get-metadata.js';
+import { getMotionContextTool } from './get-motion-context.js';
 import { getMotionStylesTool } from './get-motion-styles.js';
 import { getNodeMotionTool } from './get-node-motion.js';
 import { getNodeTool } from './get-node.js';
@@ -148,6 +149,7 @@ const DECLARED_TOOL_SPECS: readonly ToolSpec[] = [
   getReactionsTool,
   getMotionStylesTool,
   getNodeMotionTool,
+  getMotionContextTool,
   listFilesTool,
   useFileTool,
   getDesignContextTool,
