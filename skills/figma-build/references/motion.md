@@ -60,9 +60,10 @@ Read the real values from the source (the keyframe stops, the duration, the easi
 - `cubic-bezier(x1,y1,x2,y2)` → `{ type: 'CUSTOM_CUBIC_BEZIER', easingFunctionCubicBezier: {x1,y1,x2,y2} }`.
 - A **spring** (Framer `type:'spring'`, GSAP elastic) → `{ type: 'CUSTOM_SPRING', easingFunctionSpring: { bounce } }`
   (normalized 0–1), or a named preset (`GENTLE`/`QUICK`/`BOUNCY`/`SLOW`) when it's close. Figma stores
-  only the type and bounce, and how its spring spans a segment is unverified (over a 1 s segment it
-  settled by ~0.6 s), so a source spring's duration may not carry over — say the result is an
-  approximation and check the export.
+  only the type and bounce and stretches the spring over its segment (measured: one shape in normalized
+  time over 0.5–2 s segments, settling by ~60 % of it), so a source spring's physical duration does
+  not carry over — choose the segment length, say the result is an approximation and check the
+  export.
 - **Always pass the parameters.** `CUSTOM_CUBIC_BEZIER` without points and `CUSTOM_SPRING` without
   `bounce` are accepted and silently defaulted — and then render differently from what they read
   back (the spring rendered linear).
@@ -113,4 +114,10 @@ timeline and that one value you just changed shows up before trusting it. Re-rea
 - **What Figma normalizes without an error:** two keyframes at the same time keep only the later one;
   a keyframe past the timeline is kept but the timeline is not extended (`set_timeline_duration`);
   a negative `timelinePosition` is refused; replacing a track gives it new track and keyframe ids.
+- **Layer ids can change under Motion** (seen live, cause not documented): after a keyframe-track
+  write a layer appeared in its parent under a new id, and a video export re-created a frame's layers
+  under new ids. The ids first returned kept resolving to the new layers, but an id picked up after
+  one change stopped resolving after the next, and a read right after a write once returned the state
+  before it. Re-read ids (`get_motion_context`, `search_nodes`) before writing again rather than
+  reusing ones from before a write or an export.
 - Author only what the source actually animates; don't invent motion the code didn't specify.
