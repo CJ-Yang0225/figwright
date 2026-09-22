@@ -11,7 +11,7 @@ const motionNode = (id: string): BaseNode =>
     animationStyles: [{ styleId: 'S:1', name: 'Fade in' }],
     animations: { OPACITY: { keyframes: [] } },
     manualKeyframeTracks: { TRANSLATION_X: { keyframes: [] } },
-    timelines: [{ id: 'T:1', duration: 2, extra: 'ignored' }],
+    timelines: [{ id: 'T:1', duration: 2, loopMode: 'LOOP' }],
   }) as unknown as BaseNode;
 
 /** A node with no Motion mixin at all (PAGE / DOCUMENT). */
@@ -36,7 +36,8 @@ describe('get_node_motion handler', () => {
     const result = (await handler({ nodeId: '1:2' })) as GetNodeMotionResult;
     expect(result.nodeId).toBe('1:2');
     expect(result.playheadPosition).toBe(1.25);
-    expect(result.motion?.timelines).toEqual([{ id: 'T:1', duration: 2 }]);
+    // A Timeline field a later API adds (none exists yet) is carried through, not mapped away.
+    expect(result.motion?.timelines).toEqual([{ id: 'T:1', duration: 2, loopMode: 'LOOP' }]);
     expect(result.motion?.animationStyles).toEqual([{ styleId: 'S:1', name: 'Fade in' }]);
   });
 
@@ -71,6 +72,22 @@ describe('get_node_motion handler', () => {
     })) as GetNodeMotionResult;
     expect('playheadPosition' in result).toBe(false);
     expect(result.motion).not.toBeNull();
+  });
+
+  it('keeps a timeline id and duration even when the API object does not enumerate them', async () => {
+    class ApiTimeline {
+      get id(): string {
+        return 'T:9';
+      }
+      get duration(): number {
+        return 4;
+      }
+    }
+    const node = { ...(motionNode('1:6') as object), timelines: [new ApiTimeline()] };
+    const result = (await createGetNodeMotionHandler(
+      fakeFigma({ editorType: 'figma', node: node as unknown as BaseNode }),
+    )({ nodeId: '1:6' })) as GetNodeMotionResult;
+    expect(result.motion?.timelines).toEqual([{ id: 'T:9', duration: 4 }]);
   });
 
   it('returns motion: null for an unknown node id', async () => {
