@@ -171,11 +171,13 @@ back by its join as highest authority:
 
 ## Motion (animation)
 
-When `get_design_context` (full detail) tags a node with a `motion` summary — applied
-animation-style presets, animated property fields, a timeline duration — carry it into the project's
-animation mechanism (CSS `@keyframes` / `transition`, Framer Motion, GSAP, Vue `<transition>`) instead
-of emitting a static component. `get_node_motion` returns the full keyframe detail when the summary
-isn't enough. Dropping a frame's animation is a fidelity miss, the same class as dropping a shadow.
+Call `get_motion_context` once on every root you implement: it inventories every Motion source in
+the subtree (instance children included) and says what it could not read. Only `coverage.status:
+"complete"` with no nodes means nothing animates — the `motion` summary in `get_design_context` is a
+hint that dedupe and budget can drop. Implement what it returns with the project's own animation
+mechanism, treat anything the raw record doesn't state (easing curves, how tracks combine, loop,
+trigger) as your assumption and say so, and verify the result against the source. Dropping a frame's
+animation is a fidelity miss, the same class as dropping a shadow.
 → [`references/motion.md`](./references/motion.md).
 
 ## Rules

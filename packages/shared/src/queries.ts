@@ -421,7 +421,8 @@ export type MotionStyle = z.infer<typeof MotionStyleSchema>;
 export const GetMotionStylesResultSchema = z.object({ styles: z.array(MotionStyleSchema) });
 export type GetMotionStylesResult = z.infer<typeof GetMotionStylesResultSchema>;
 
-export const TimelineSchema = z.object({ id: z.string(), duration: z.number() });
+// Loose: a field Figma adds to Timeline later (a loop mode, say) is carried through, not stripped.
+export const TimelineSchema = z.looseObject({ id: z.string(), duration: z.number() });
 export type Timeline = z.infer<typeof TimelineSchema>;
 
 /**
@@ -450,3 +451,45 @@ export const GetNodeMotionResultSchema = z.object({
   playheadPosition: z.number().optional(),
 });
 export type GetNodeMotionResult = z.infer<typeof GetNodeMotionResultSchema>;
+
+// ── get_motion_context: every Motion source under a node ─────────────────────
+/** One animated node of the inventory; `motion` is exactly get_node_motion's raw read. */
+export const MotionContextNodeSchema = z.object({
+  nodeId: z.string(),
+  parentId: z.string().nullable(),
+  name: z.string(),
+  type: z.string(),
+  motion: NodeMotionSchema,
+});
+export type MotionContextNode = z.infer<typeof MotionContextNodeSchema>;
+
+export const MotionDiagnosticSchema = z.object({
+  nodeId: z.string(),
+  code: z.enum(['read-error', 'node-over-budget', 'unknown-field']),
+  message: z.string(),
+});
+export type MotionDiagnostic = z.infer<typeof MotionDiagnosticSchema>;
+
+/**
+ * What the read actually covered. `complete` with no nodes is the only statement that the subtree
+ * does not animate; `partial` says why and which subtree roots were not read.
+ */
+export const MotionCoverageSchema = z.object({
+  status: z.enum(['complete', 'partial']),
+  visitedNodes: z.number(),
+  animatedNodes: z.number(),
+  reasons: z.array(z.enum(['node-limit', 'payload-limit', 'read-error'])).optional(),
+  /** Roots of the subtrees this call did not read — disjoint, each a nodeId to call again with. */
+  pendingNodeIds: z.array(z.string()).optional(),
+  pendingOmitted: z.number().optional(),
+});
+export type MotionCoverage = z.infer<typeof MotionCoverageSchema>;
+
+export const GetMotionContextResultSchema = z.object({
+  rootNodeId: z.string(),
+  coverage: MotionCoverageSchema,
+  diagnostics: z.array(MotionDiagnosticSchema).optional(),
+  diagnosticsOmitted: z.number().optional(),
+  nodes: z.array(MotionContextNodeSchema),
+});
+export type GetMotionContextResult = z.infer<typeof GetMotionContextResultSchema>;
