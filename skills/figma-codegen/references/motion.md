@@ -31,6 +31,9 @@ design says is not.
    - `get_variable_defs` to look up a `{ type: "VARIABLE_ALIAS", id }` in an easing or preset prop.
      Its `valuesByMode` are the variable's definitions, not the value resolved for this node's mode.
    - `export_video` of the top-level frame as a visual reference of the animation to verify against.
+     Read what you need by id first: an export was seen to re-create the frame's layers under new ids,
+     after which an id picked up since an earlier change stopped resolving (re-run
+     `get_motion_context` to get current ones).
 
 ## What the record says (plugin API typings)
 
@@ -83,14 +86,17 @@ so re-verify when output disagrees:
 ## Still open — settle per case and say what you assumed
 
 - **Springs.** The record is the easing `type` (`GENTLE`, `QUICK`, `BOUNCY`, `SLOW`, `CUSTOM_SPRING`)
-  and a normalized `bounce`. The plugin API derives bounce from a physical mass, stiffness and damping
-  (`figma.motion.physicalSpringToNormalized`) but stores none of them, so nothing in the record fixes
-  the spring's time scale. Measured over 1 s segments only: springs with a bounce overshot and settled
-  by ~0.6 s. How the curve follows from type, bounce and segment length is unverified — the spring
-  you emit is your assumption; say so and compare it with the export.
+  and a normalized `bounce`; the plugin API derives bounce from a physical mass, stiffness and damping
+  (`figma.motion.physicalSpringToNormalized`) and stores none of them. Measured: the curve spans its
+  segment — one shape in normalized time over 0.5, 1 and 2 s segments (bounce 0.4 peaked at 1.087 of
+  the travel at 30 % of the segment and settled by ~60 %) — and follows the bounce alone: `GENTLE`
+  rendered exactly like a `CUSTOM_SPRING` at GENTLE's stored bounce 0.25. How bounce maps to the
+  curve is undocumented — the spring you emit is your assumption; say so and compare it with the
+  export.
 - **Read ≠ render.** A `CUSTOM_CUBIC_BEZIER` written without points reads back `(0, 0, 0.58, 1)` but
   renders like `(0.5, 0, 0.5, 1)`; a `CUSTOM_SPRING` written without a bounce reads `0.25` but renders
-  linear. When a curve matters, compare against the export.
+  linear, while one written with 0.25 renders as a spring. When a curve matters, compare against the
+  export.
 - **SCALE composition** beyond opacity, OFFSET on non-zero bases, and anything the diagnostics flag
   as `unknown-field`: carry the data, flag the meaning as unverified.
 
