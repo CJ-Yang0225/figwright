@@ -5,6 +5,7 @@ import {
   captureNotices,
   reportSkew,
   withEasingNotice,
+  withLookupTimeoutNotice,
   withSkewNotice,
 } from '../../src/tools/notices.js';
 
@@ -254,5 +255,71 @@ describe('withEasingNotice', () => {
         (r, notices) => withEasingNotice('get_node_motion', withSkewNotice(r, notices.skew)),
       ),
     ).rejects.toThrow(/boom[\s\S]*OUT OF DATE/);
+  });
+});
+
+describe('withLookupTimeoutNotice', () => {
+  // Figma's own text, verbatim as measured live in the R7 state.
+  const FIGMA =
+    'Unable to establish connection to Figma after 10 seconds. Please check your internet connection.';
+  const HEADING = 'FIGMA GAVE UP LOOKING UP AN ID';
+  const failWith = (err: unknown) => async (): Promise<CallToolResult> => {
+    throw err;
+  };
+  const messageOf = async (run: Promise<CallToolResult>): Promise<string> =>
+    run.then(
+      () => '',
+      (err: unknown) => (err as Error).message,
+    );
+  const count = (text: string, of: string): number => text.split(of).length - 1;
+
+  it.each([
+    ['on its own', FIGMA],
+    ['behind the relay prefixes', `INTERNAL_ERROR: INTERNAL_ERROR: ${FIGMA}`],
+    ['inside the batch wrapper', `batch: capture failed before any op was applied: ${FIGMA}`],
+  ])('explains the timeout %s, once, keeping Figma’s text', async (_, raised) => {
+    const message = await messageOf(withLookupTimeoutNotice(failWith(new Error(raised))));
+    expect(message.startsWith(raised)).toBe(true);
+    expect(count(message, HEADING)).toBe(1);
+    expect(message).toContain('search_nodes');
+    expect(message).toContain('re-run the Figwright plugin');
+  });
+
+  it('explains a bare-string rejection too', async () => {
+    const message = await messageOf(withLookupTimeoutNotice(failWith(FIGMA)));
+    expect(message.startsWith(FIGMA)).toBe(true);
+    expect(count(message, HEADING)).toBe(1);
+  });
+
+  it('appends once even when the text repeats or the error passes through twice', async () => {
+    const twice = await messageOf(
+      withLookupTimeoutNotice(failWith(new Error(`${FIGMA}; rollback: ${FIGMA}`))),
+    );
+    expect(count(twice, HEADING)).toBe(1);
+    const nested = await messageOf(
+      withLookupTimeoutNotice(async () => withLookupTimeoutNotice(failWith(new Error(FIGMA)))),
+    );
+    expect(count(nested, HEADING)).toBe(1);
+  });
+
+  it('leaves other errors and every success result untouched', async () => {
+    const other = new Error('rename_node: node 1:2 not found');
+    await expect(withLookupTimeoutNotice(failWith(other))).rejects.toBe(other);
+    const ok = result(`{"note":"${FIGMA}"}`);
+    await expect(withLookupTimeoutNotice(async () => ok)).resolves.toBe(ok);
+  });
+
+  it('comes before the other notices when they ride on the same failure', async () => {
+    const message = await messageOf(
+      captureNotices(
+        async () =>
+          withLookupTimeoutNotice(async () => {
+            reportSkew(NOTICE);
+            throw new Error(FIGMA);
+          }),
+        r => r,
+      ),
+    );
+    expect(message.indexOf(HEADING)).toBeLessThan(message.indexOf('PLUGIN OUT OF DATE'));
   });
 });

@@ -371,6 +371,40 @@ describe.skipIf(!existsSync(DIST_ENTRY))('MCP wire contract (built dist)', () =>
     }
   }, 30_000);
 
+  it("explains Figma's by-id lookup timeout on the failure the agent sees", async () => {
+    // The explanation is wired in index.ts; its unit tests would stay green with that line deleted.
+    const figma =
+      'Unable to establish connection to Figma after 10 seconds. Please check your internet connection.';
+    const server = new WireClient();
+    await server.start();
+    await server.handshake(LATEST_CLIENT_PROTOCOL);
+    const plugin = await connectFakePlugin({
+      port: server.port,
+      handlers: {
+        get_node_motion: () => {
+          throw new Error(figma);
+        },
+      },
+    });
+
+    try {
+      const res = await server.send('tools/call', {
+        name: 'get_node_motion',
+        arguments: { nodeId: '999:999' },
+      });
+
+      expect(res.result?.isError).toBe(true);
+      const content = res.result?.content as { type: string; text: string }[];
+      const text = content.map(c => c.text).join('');
+      expect(text).toContain(figma);
+      expect(text.split('FIGMA GAVE UP LOOKING UP AN ID')).toHaveLength(2);
+      expect(text).toMatch(/re-run the Figwright plugin/);
+    } finally {
+      closeSocket(plugin);
+      await server.stop();
+    }
+  }, 30_000);
+
   it('carries raw Motion through the built server untouched, fields it has never seen included', async () => {
     // The inventory's contract is that nothing between the Figma API and the agent reshapes Motion
     // data. Every hop — msgpack, the relay, the SDK's result handling — is real here, so a

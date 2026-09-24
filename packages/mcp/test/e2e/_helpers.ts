@@ -125,7 +125,23 @@ export const connectFakePlugin = async (opts: FakePluginOptions): Promise<WebSoc
       );
       return;
     }
-    const result = handler(env.params);
+    let result: unknown;
+    try {
+      result = handler(env.params);
+    } catch (err) {
+      // What the real sandbox does when a handler throws: an INTERNAL error carrying its message.
+      ws.send(
+        encodeEnvelope(
+          createError({
+            id: env.id,
+            sessionId: env.sessionId,
+            code: ErrorCode.Internal,
+            message: err instanceof Error ? err.message : String(err),
+          }),
+        ),
+      );
+      return;
+    }
     ws.send(encodeEnvelope(createResponse({ id: env.id, sessionId: env.sessionId, result })));
   });
 
