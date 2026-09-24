@@ -31,6 +31,10 @@ describe('prompts registry', () => {
     // The static tree's motion summary is not evidence of no animation (dedupe drops instance
     // children), so the inventory has to be taught, not merely allowed.
     expect(text).toContain('get_motion_context');
+    // The fitted spring must stay labelled as a fit, and the read-side easing notice must be
+    // recognisable by the header the read tools actually append.
+    expect(text).toContain('a measured fit, not Figma');
+    expect(text).toContain('MOTION EASING MAY NOT BE WHAT FIGMA PLAYS');
   });
 
   it('interpolates a provided nodeId into the workflow', () => {

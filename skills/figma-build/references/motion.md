@@ -61,9 +61,11 @@ Read the real values from the source (the keyframe stops, the duration, the easi
 - A **spring** (Framer `type:'spring'`, GSAP elastic) → `{ type: 'CUSTOM_SPRING', easingFunctionSpring: { bounce } }`
   (normalized 0–1), or a named preset (`GENTLE`/`QUICK`/`BOUNCY`/`SLOW`) when it's close. Figma stores
   only the type and bounce and stretches the spring over its segment (measured: one shape in normalized
-  time over 0.5–2 s segments, settling by ~60 % of it), so a source spring's physical duration does
-  not carry over — choose the segment length, say the result is an approximation and check the
-  export.
+  time over 0.5–2 s segments, settling by ~60 % of it; the shape follows the bounce alone, whatever the
+  type), so a source spring's physical duration does not carry over — choose the segment length. To
+  pick a bounce whose shape matches the source's, use the curve in the figma-codegen skill's
+  `references/motion.md` (Springs): a measured fit, not Figma documentation, valid for bounce 0 and
+  0.01–0.8. Say the result is an approximation and check the export.
 - **Always pass the parameters.** `CUSTOM_CUBIC_BEZIER` without points and `CUSTOM_SPRING` without
   `bounce` are refused with an error, and nothing is written: Figma would default them and then play
   something other than what they read back (the spring plays linear). For a straight line use
@@ -114,7 +116,9 @@ timeline and that one value you just changed shows up before trusting it. Re-rea
   itself.
 - **What Figma normalizes without an error:** two keyframes at the same time keep only the later one;
   a keyframe past the timeline is kept but the timeline is not extended (`set_timeline_duration`);
-  a negative `timelinePosition` is refused; replacing a track gives it new track and keyframe ids.
+  a negative `timelinePosition` is refused; replacing a track without ids gives it new track and
+  keyframe ids, while writing back the `id`s it read (track and each keyframe) kept all of them (one
+  round trip).
 - **Layer ids can change under Motion** (seen live, cause not documented): after a keyframe-track
   write a layer appeared in its parent under a new id, and a video export re-created a frame's layers
   under new ids. The ids first returned kept resolving to the new layers, but an id picked up after
