@@ -9,7 +9,9 @@ import { z } from 'zod';
 //
 // Idiom, matching the rest of the repo: keep these schemas simple (enum + describe + basic bounds)
 // and defer cross-field semantics (e.g. "an effects field needs `field` or `propertyId`") to the
-// hand-written type-guards in the plugin handlers — the repo does not use Zod .superRefine / .refine.
+// hand-written type-guards in the plugin handlers. The one exception is motionEasingSchema's
+// refinement below, which has to hold at every entry point (direct call, batch op, the leader's
+// /rpc) — and all three validate against this schema, while no plugin handler sees all three.
 
 const rgba = z
   .object({
@@ -40,6 +42,30 @@ export const MOTION_EASING_TYPES = [
   'HOLD',
 ] as const;
 
+// A custom easing written without its parameters is accepted by Figma, which then reads back a
+// value it does not play (measured live, segments 01 and 05): the record looks complete and is
+// wrong, and writing it back changes the animation. Refused here rather than defaulted, so the
+// agent picks the curve instead of us. A refinement adds no keyword to the advertised JSON Schema.
+const MISSING_EASING_PARAMS = {
+  CUSTOM_SPRING: {
+    path: 'easingFunctionSpring',
+    message:
+      'CUSTOM_SPRING needs easingFunctionSpring: { bounce } (0–1). Written without it, Figma ' +
+      'stores and reads back bounce 0.25 but plays the segment LINEAR (measured), and writing that ' +
+      'read-back record again turns it into a real 0.25 spring. Pass the bounce explicitly; for a ' +
+      "straight line use type LINEAR; for Figma's default spring pass { bounce: 0.25 } (renders " +
+      'like GENTLE).',
+  },
+  CUSTOM_CUBIC_BEZIER: {
+    path: 'easingFunctionCubicBezier',
+    message:
+      'CUSTOM_CUBIC_BEZIER needs easingFunctionCubicBezier: { x1, y1, x2, y2 }. Written without ' +
+      'it, Figma reads back (0, 0, 0.58, 1) but plays roughly (0.5, 0, 0.5, 1) (measured). Pass ' +
+      'the four control points explicitly; for a straight line use type LINEAR; for the curve ' +
+      'Figma reads back pass { x1: 0, y1: 0, x2: 0.58, y2: 1 }.',
+  },
+} as const;
+
 export const motionEasingSchema = z
   .object({
     type: z.enum(MOTION_EASING_TYPES),
@@ -51,6 +77,15 @@ export const motionEasingSchema = z
       .object({ bounce: z.number().min(0).max(1) })
       .describe('Normalized bounce 0–1; only for type "CUSTOM_SPRING"')
       .optional(),
+  })
+  .superRefine((easing, ctx) => {
+    const missing =
+      easing.type === 'CUSTOM_SPRING' || easing.type === 'CUSTOM_CUBIC_BEZIER'
+        ? MISSING_EASING_PARAMS[easing.type]
+        : undefined;
+    if (missing !== undefined && easing[missing.path] === undefined) {
+      ctx.addIssue({ code: 'custom', path: [missing.path], message: missing.message });
+    }
   })
   .describe(
     'Motion easing: a named preset, or CUSTOM_CUBIC_BEZIER / CUSTOM_SPRING with its params',
