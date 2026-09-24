@@ -44,6 +44,7 @@ import { createGetDocumentHandler } from './get-document.js';
 import { createGetFontsHandler } from './get-fonts.js';
 import { createGetLocalComponentsHandler } from './get-local-components.js';
 import { createGetMetadataHandler } from './get-metadata.js';
+import { createGetMotionContextHandler } from './get-motion-context.js';
 import { createGetMotionStylesHandler } from './get-motion-styles.js';
 import { createGetNodeMotionHandler } from './get-node-motion.js';
 import { createGetNodeHandler } from './get-node.js';
@@ -224,6 +225,7 @@ export const createSandboxHandlers = (figmaCtx: typeof figma): SandboxHandlers =
     get_reactions: createGetReactionsHandler(figmaCtx),
     get_motion_styles: createGetMotionStylesHandler(figmaCtx),
     get_node_motion: createGetNodeMotionHandler(figmaCtx),
+    get_motion_context: createGetMotionContextHandler(figmaCtx),
     list_files: createListFilesHandler(figmaCtx),
     get_design_context: createGetDesignContextHandler(figmaCtx),
     get_screenshot: createGetScreenshotHandler(figmaCtx),

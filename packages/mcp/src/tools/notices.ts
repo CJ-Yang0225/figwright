@@ -104,6 +104,89 @@ export const withRoutingNotice = (
   };
 };
 
+/** The Motion reads whose payload carries keyframe easings as Figma stores them. */
+const EASING_READ_TOOLS: ReadonlySet<string> = new Set(['get_node_motion', 'get_motion_context']);
+
+const SPRING_WITHOUT_BOUNCE =
+  'CUSTOM_SPRING bounce 0.25: either a real 0.25 spring or one written without a bounce, which ' +
+  'Figma plays LINEAR. The record is identical either way (measured), so what plays is unknown.';
+const BEZIER_WITHOUT_POINTS =
+  'CUSTOM_CUBIC_BEZIER (0, 0, 0.58, 1) with x2 exactly 0.58: written without control points, and ' +
+  'Figma plays it roughly as (0.5, 0, 0.5, 1), not the points it reports (measured). Points that ' +
+  'were actually written read back at float32 precision (0.5799999833106995).';
+
+/** Why an easing record may not be what Figma plays, or null when it is unambiguous. */
+const ambiguousEasing = (easing: Record<string, unknown>): string | null => {
+  if (easing.type === 'CUSTOM_SPRING') {
+    const spring = easing.easingFunctionSpring as { bounce?: unknown } | undefined;
+    return spring?.bounce === 0.25 ? SPRING_WITHOUT_BOUNCE : null;
+  }
+  if (easing.type === 'CUSTOM_CUBIC_BEZIER') {
+    const p = easing.easingFunctionCubicBezier as Record<string, unknown> | undefined;
+    // Exact equality is the test: Figma's own fill-in is the only way to read 0.58 unrounded.
+    return p?.x1 === 0 && p.y1 === 0 && p.x2 === 0.58 && p.y2 === 1 ? BEZIER_WITHOUT_POINTS : null;
+  }
+  return null;
+};
+
+/** Each ambiguous easing under one node's Motion record, as `nodeId path`, grouped by reason. */
+const findAmbiguousEasings = (
+  nodeId: string,
+  value: unknown,
+  path: string,
+  out: Map<string, string[]>,
+): void => {
+  if (Array.isArray(value)) {
+    value.forEach((item, i) => findAmbiguousEasings(nodeId, item, `${path}[${i}]`, out));
+    return;
+  }
+  if (value === null || typeof value !== 'object') return;
+  const record = value as Record<string, unknown>;
+  const reason = ambiguousEasing(record);
+  if (reason !== null) out.set(reason, [...(out.get(reason) ?? []), `${nodeId} ${path}`]);
+  for (const [key, child] of Object.entries(record)) {
+    findAmbiguousEasings(nodeId, child, path === '' ? key : `${path}.${key}`, out);
+  }
+};
+
+/**
+ * Warn about Motion easings whose record does not say what Figma plays.
+ *
+ * Refusing the incomplete input (motionEasingSchema) stops new ones, but the file may already hold
+ * them — written by Figma's own UI, another tool, or before the refusal — and the read passes them
+ * through raw. An agent implementing or copying that record has no way to know, so the warning
+ * rides on the result itself, once per result, naming each affected node and field.
+ */
+export const withEasingNotice = (toolName: string, result: CallToolResult): CallToolResult => {
+  if (!EASING_READ_TOOLS.has(toolName) || result.isError === true) return result;
+  const first = result.content[0];
+  if (first?.type !== 'text') return result;
+  let payload: { nodeId?: unknown; motion?: unknown; nodes?: unknown };
+  try {
+    payload = JSON.parse(first.text) as typeof payload;
+  } catch {
+    // Not JSON is not a Motion read; there is nothing to inspect.
+    return result;
+  }
+  const nodes = Array.isArray(payload.nodes) ? (payload.nodes as (typeof payload)[]) : [payload];
+  const found = new Map<string, string[]>();
+  for (const node of nodes) findAmbiguousEasings(String(node.nodeId), node.motion, '', found);
+  if (found.size === 0) return result;
+  const groups = [...found].map(([reason, at]) => `${reason}\n${at.map(a => `- ${a}`).join('\n')}`);
+  const text =
+    '\n\n⚠️ MOTION EASING MAY NOT BE WHAT FIGMA PLAYS\n' +
+    `${groups.join('\n')}\n` +
+    'Do not implement these curves from the record alone, and do not copy them to another node ' +
+    'as-is: writing such a record can change the animation (an unbounced spring written back ' +
+    'becomes a real 0.25 spring, measured). To see what plays, export_video the frame, check the ' +
+    'export is current (its duration matches the timeline and a recent change shows), then ' +
+    'measure it. When writing, pass the curve you mean explicitly — LINEAR if it plays linear.';
+  return {
+    ...result,
+    content: [...result.content, { type: 'text', text, annotations: { audience: ['assistant'] } }],
+  };
+};
+
 /**
  * Append the plugin-skew warning to a tool result.
  *
