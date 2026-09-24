@@ -65,8 +65,9 @@ Read the real values from the source (the keyframe stops, the duration, the easi
   not carry over — choose the segment length, say the result is an approximation and check the
   export.
 - **Always pass the parameters.** `CUSTOM_CUBIC_BEZIER` without points and `CUSTOM_SPRING` without
-  `bounce` are accepted and silently defaulted — and then render differently from what they read
-  back (the spring rendered linear).
+  `bounce` are refused with an error, and nothing is written: Figma would default them and then play
+  something other than what they read back (the spring plays linear). For a straight line use
+  `LINEAR`; for Figma's default, write it out (`bounce: 0.25`, or points `0, 0, 0.58, 1`).
 
 ## Stagger → one atomic `batch` (the efficiency win)
 
