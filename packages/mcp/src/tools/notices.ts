@@ -187,6 +187,42 @@ export const withEasingNotice = (toolName: string, result: CallToolResult): Call
   };
 };
 
+/** Figma's own text when its by-id lookup gives up (measured, R7). */
+const FIGMA_LOOKUP_TIMEOUT = 'Unable to establish connection to Figma after 10 seconds';
+const LOOKUP_TIMEOUT_HEADING = '⚠️ FIGMA GAVE UP LOOKING UP AN ID';
+const LOOKUP_TIMEOUT_NOTICE =
+  `\n\n${LOOKUP_TIMEOUT_HEADING}\n` +
+  "The error above is Figma's own: a lookup of a node (or variable) by its id waited 10 " +
+  'seconds and gave up. It has been seen when the id does not exist in this file, and when the ' +
+  'Figwright plugin session was in a state whose cause is not known. Retrying the same call in ' +
+  'the same plugin session has usually failed the same way.\n' +
+  'Next: check that the id exists by walking to it, which kept working in that state — ' +
+  'search_nodes, or get_node on its parent (for an instance sublayer `I<instance>;…`, get_node ' +
+  'on `<instance>`). If the id exists, ask the user to re-run the Figwright plugin in this Figma ' +
+  'file, then retry; that is what restored lookups in most of the cases observed.';
+
+/**
+ * Explain Figma's by-id lookup timeout wherever it surfaces in a tool error.
+ *
+ * Figma's text blames the network, which sends an agent into retries that fail the same way. It
+ * arrives on its own, wrapped (`batch: capture failed …`), or behind relay prefixes, so it is
+ * matched as a substring and kept verbatim; the explanation is appended once, and only to errors.
+ * It lives in the server so it reaches a plugin build that predates it.
+ */
+export const withLookupTimeoutNotice = async (
+  run: () => Promise<CallToolResult>,
+): Promise<CallToolResult> => {
+  try {
+    return await run();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (!message.includes(FIGMA_LOOKUP_TIMEOUT) || message.includes(LOOKUP_TIMEOUT_HEADING)) {
+      throw err;
+    }
+    throw new Error(`${message}${LOOKUP_TIMEOUT_NOTICE}`, { cause: err });
+  }
+};
+
 /**
  * Append the plugin-skew warning to a tool result.
  *

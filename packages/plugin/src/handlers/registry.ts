@@ -1,5 +1,6 @@
 import type { SandboxHandlers } from '../dispatcher.js';
 import { createIdempotencyCache, idempotent } from '../idempotency.js';
+import { withInstanceIdLookup } from '../node-lookup.js';
 import { createAddComponentPropertyHandler } from './add-component-property.js';
 import { createAddPageHandler } from './add-page.js';
 import { createAddVariableModeHandler } from './add-variable-mode.js';
@@ -114,7 +115,8 @@ import { createUpdateTextStyleHandler } from './update-text-style.js';
  * Wiring lives here (not in code.ts) so a registry test can enumerate the keys and assert they
  * match the server's advertised tools — a new tool can't be half-wired without a test failing.
  */
-export const createSandboxHandlers = (figmaCtx: typeof figma): SandboxHandlers => {
+export const createSandboxHandlers = (figmaApi: typeof figma): SandboxHandlers => {
+  const figmaCtx = withInstanceIdLookup(figmaApi);
   const cache = createIdempotencyCache();
 
   const rawWrites: SandboxHandlers = {

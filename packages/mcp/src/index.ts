@@ -35,6 +35,7 @@ import { handleListFiles, LIST_FILES_TOOL_NAME } from './tools/list-files.js';
 import {
   captureNotices,
   withEasingNotice,
+  withLookupTimeoutNotice,
   withRoutingNotice,
   withSkewNotice,
 } from './tools/notices.js';
@@ -215,7 +216,7 @@ const createMcpServer = (): McpServer => {
     // success to the user.
     const handler: ToolHandler = async args =>
       captureNotices(
-        () => run(normalizeIdArgs(args)),
+        async () => withLookupTimeoutNotice(async () => run(normalizeIdArgs(args))),
         (result, notices) =>
           withEasingNotice(
             spec.name,
