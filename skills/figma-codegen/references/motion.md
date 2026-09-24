@@ -83,20 +83,56 @@ so re-verify when output disagrees:
   matched a CSS blur radius of the same number within ~1% (one case).
 - **HOLD** keeps the previous value up to its keyframe and switches exactly there (a step at the end).
 
+## Springs — measured facts, then a fitted curve
+
+Keep the two layers apart when you implement a spring and when you report it.
+
+**Measured** (Figma's render, same file, 2026-09):
+
+- The record is the easing `type` (`GENTLE`, `QUICK`, `BOUNCY`, `SLOW`, `CUSTOM_SPRING`) and a
+  normalized `bounce`; the plugin API derives bounce from a physical mass, stiffness and damping
+  (`figma.motion.physicalSpringToNormalized`) and stores none of them. Stored bounces read back:
+  `GENTLE` 0.25, `QUICK` ≈ 0.4226, `BOUNCY` ≈ 0.6938, `SLOW` 0.
+- The curve spans its segment: one shape in normalized time over 0.5, 1 and 2 s segments (bounce 0.4
+  peaked at 1.087 of the travel at 30 % of the segment and settled by ~60 %). A source spring's
+  physical duration does not carry over.
+- The shape follows the stored bounce alone, not the type: each named spring rendered like a
+  `CUSTOM_SPRING` at its stored bounce, and `SLOW` like `CUSTOM_SPRING` 0.
+
+**Fitted** — a curve fitted to those renders, not Figma documentation. With `u` the normalized time
+in the segment (0 → 1), `b` the bounce and `ζ = 1 − b`:
+
+- `0.01 ≤ b ≤ 0.8`: `ζω = 7.004 − ½·ln(b + 0.01025)`, `ω_d = ω·√(1 − ζ²)`,
+  `x(u) = 1 − e^(−ζωu)·(cos(ω_d·u) + (ζω/ω_d)·sin(ω_d·u))`.
+- `b = 0`: critically damped, `x(u) = 1 − (1 + 11.25u)·e^(−11.25u)`.
+- End the segment on its keyframe value (`x(1) = 1`); the fit is already within 0.1 % of the travel at `u = 1`.
+
+Residuals, per 100 px of travel: at most 0.591 px on the 24 curves it was fitted to, and at most
+0.739 px on 8 springs registered before they were rendered. It holds for `b = 0` and
+`0.01 ≤ b ≤ 0.8`, which covers every named spring. Below 0.01 (other than 0) and above 0.8 there is no
+data: using the formula there is an extrapolation, so say so. Where the platform takes no function
+(CSS, WAAPI), sample it into `linear()`: 400 intervals kept the error under 0.1 % of the travel up to
+bounce 0.8, while 41 points reached ~4 % at `BOUNCY`. Report a spring built this way as "Figma's
+spring per a measured fit", and, since Motion is beta, compare it with the export when it matters.
+
 ## Still open — settle per case and say what you assumed
 
-- **Springs.** The record is the easing `type` (`GENTLE`, `QUICK`, `BOUNCY`, `SLOW`, `CUSTOM_SPRING`)
-  and a normalized `bounce`; the plugin API derives bounce from a physical mass, stiffness and damping
-  (`figma.motion.physicalSpringToNormalized`) and stores none of them. Measured: the curve spans its
-  segment — one shape in normalized time over 0.5, 1 and 2 s segments (bounce 0.4 peaked at 1.087 of
-  the travel at 30 % of the segment and settled by ~60 %) — and follows the bounce alone: `GENTLE`
-  rendered exactly like a `CUSTOM_SPRING` at GENTLE's stored bounce 0.25. How bounce maps to the
-  curve is undocumented — the spring you emit is your assumption; say so and compare it with the
-  export.
-- **Read ≠ render.** A `CUSTOM_CUBIC_BEZIER` written without points reads back `(0, 0, 0.58, 1)` but
-  renders like `(0.5, 0, 0.5, 1)`; a `CUSTOM_SPRING` written without a bounce reads `0.25` but renders
-  linear, while one written with 0.25 renders as a spring. When a curve matters, compare against the
-  export.
+- **When the read carries `MOTION EASING MAY NOT BE WHAT FIGMA PLAYS`.** `get_node_motion` and
+  `get_motion_context` append this notice for the two records that cannot say what plays, listing
+  each by node and path:
+  - a `CUSTOM_SPRING` with bounce 0.25 — a real 0.25 spring, or one written without a bounce, which
+    Figma plays **LINEAR**;
+  - a `CUSTOM_CUBIC_BEZIER` of exactly `(0, 0, 0.58, 1)` — written without points, which Figma plays
+    roughly as **`(0.5, 0, 0.5, 1)`**.
+
+  The record is identical either way (measured). Implementing the record gives the 0.25 spring or
+  `(0, 0, 0.58, 1)`; Figma may be playing LINEAR or ≈ `(0.5, 0, 0.5, 1)`. Only the export tells which
+  (`export_video`, check it is current, measure that segment), and which one to ship is the user's
+  call: show them the record and what the export shows, and ask. Do not copy such a record to another
+  node as-is — writing it back makes an unbounced spring a real 0.25 spring (measured). Figwright
+  refuses to write either easing without its parameters, so new writes cannot create this state;
+  records already in a file still can hold it.
+
 - **SCALE composition** beyond opacity, OFFSET on non-zero bases, and anything the diagnostics flag
   as `unknown-field`: carry the data, flag the meaning as unverified.
 
