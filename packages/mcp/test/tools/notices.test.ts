@@ -6,6 +6,7 @@ import {
   reportSkew,
   withEasingNotice,
   withLookupTimeoutNotice,
+  withRolledBackMotionNotice,
   withStalePresetTargetNotice,
   withMotionWriteNotice,
   withSkewNotice,
@@ -494,5 +495,60 @@ describe('withStalePresetTargetNotice', () => {
     const once = await messageOf(withStalePresetTargetNotice(failWith(new Error(FIGMA))));
     const twice = await messageOf(withStalePresetTargetNotice(failWith(new Error(once))));
     expect(count(twice, HEADING)).toBe(1);
+  });
+});
+
+describe('withRolledBackMotionNotice', () => {
+  const HEADING = 'MOTION LAYER IDS MAY HAVE CHANGED';
+  const failWith = (message: string) => async (): Promise<CallToolResult> => {
+    throw new Error(message);
+  };
+  const messageOf = async (run: Promise<CallToolResult>): Promise<string> =>
+    run.then(
+      () => '',
+      (err: unknown) => (err as Error).message,
+    );
+  const op = (tool: string): unknown => ({ tool, params: {} });
+  // The plugin's own wording, as batch.ts throws it after undoing ops 0..i-1.
+  const failedAt = (i: number, tool: string): string =>
+    `INTERNAL_ERROR: batch: op ${i} (${tool}) failed, rolled back ${i} applied op(s): boom`;
+
+  it('warns when a failed batch rolled back a Motion write', async () => {
+    const args = { ops: [op('apply_animation_style'), op('apply_animation_style')] };
+    const message = await messageOf(
+      withRolledBackMotionNotice('batch', args)(failWith(failedAt(1, 'apply_animation_style'))),
+    );
+    expect(message.startsWith(failedAt(1, 'apply_animation_style'))).toBe(true);
+    expect(message.split(HEADING)).toHaveLength(2);
+    expect(message).toContain('rolled them back');
+  });
+
+  it('stays silent when nothing Motion was applied before the failure', async () => {
+    const cases: [unknown[], string][] = [
+      // Failed at op 0: nothing was applied.
+      [[op('apply_animation_style')], failedAt(0, 'apply_animation_style')],
+      // Only non-Motion ops were rolled back; the Motion op is the one that failed.
+      [[op('rename_node'), op('apply_animation_style')], failedAt(1, 'apply_animation_style')],
+      // Capture failed before any op was applied.
+      [[op('apply_animation_style')], 'batch: capture failed before any op was applied: x'],
+    ];
+    for (const [ops, raised] of cases) {
+      expect(await messageOf(withRolledBackMotionNotice('batch', { ops })(failWith(raised)))).toBe(
+        raised,
+      );
+    }
+  });
+
+  it('ignores other tools, successes, and an error that already carries the notice', async () => {
+    const raised = failedAt(1, 'apply_animation_style');
+    const args = { ops: [op('apply_animation_style'), op('apply_animation_style')] };
+    expect(
+      await messageOf(withRolledBackMotionNotice('apply_animation_style', args)(failWith(raised))),
+    ).toBe(raised);
+    const ok: CallToolResult = { content: [{ type: 'text', text: '{}' }] };
+    expect(await withRolledBackMotionNotice('batch', args)(async () => ok)).toBe(ok);
+    const once = await messageOf(withRolledBackMotionNotice('batch', args)(failWith(raised)));
+    const twice = await messageOf(withRolledBackMotionNotice('batch', args)(failWith(once)));
+    expect(twice.split(HEADING)).toHaveLength(2);
   });
 });

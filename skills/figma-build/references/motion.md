@@ -243,5 +243,6 @@ come back `no-changes`; instance children the dedupe collapses carry no summary 
   reusing ones from before a write or an export. Every Motion write and `export_video` result now
   carries a fixed `⚠️ MOTION LAYER IDS MAY HAVE CHANGED` notice saying the same thing — it is a
   standing reminder, not a per-call detection, so it rides on every one of those results whether or
-  not that particular call changed anything.
+  not that particular call changed anything. A failed `batch` carries it too when Motion ops had been
+  applied and were rolled back, since the rollback is itself a Motion write.
 - Author only what the source actually animates; don't invent motion the code didn't specify.
