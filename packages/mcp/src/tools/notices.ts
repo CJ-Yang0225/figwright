@@ -303,7 +303,8 @@ const triggersMotionWriteNotice = (toolName: string, args: Record<string, unknow
  * rejections of these tools happen before any Figma mutation — the editor gate, an alias check,
  * argument validation — and telling the agent an id may have changed when nothing was written would
  * be actively misleading. `export_video`'s `path: null` (nothing encoded, but no error) still
- * counts as success here.
+ * counts as success here. The one error that does follow a write is a batch that applied Motion ops
+ * and rolled them back; {@link withRolledBackMotionNotice} covers it.
  */
 export const withMotionWriteNotice = (
   toolName: string,
@@ -320,6 +321,46 @@ export const withMotionWriteNotice = (
     ],
   };
 };
+
+// The plugin's own wording for a batch op that failed after earlier ops were applied (and undone):
+// `batch: op <i> (<tool>) failed, rolled back …`. Ops 0..i-1 were written, then written back.
+const BATCH_OP_FAILED = /batch: op (\d+) \([^)]*\) failed, rolled back/;
+
+/**
+ * Append the R8 layer-id notice to a failed `batch` whose rollback undid Motion writes.
+ *
+ * A batch that fails at op i has already applied ops 0..i-1 and undone them, and both the apply and
+ * the undo are Motion writes when those ops are — the same writes that renumber layer ids on
+ * success. So the ids the agent holds may be stale even though the call failed. Only then: a
+ * failure at op 0, or one during capture, wrote nothing, and a rollback of non-Motion ops is not
+ * what R8 describes.
+ */
+export const withRolledBackMotionNotice =
+  (toolName: string, args: Record<string, unknown>) =>
+  async (run: () => Promise<CallToolResult>): Promise<CallToolResult> => {
+    try {
+      return await run();
+    } catch (err) {
+      if (toolName !== 'batch') throw err;
+      const message = err instanceof Error ? err.message : String(err);
+      const failedAt = Number(BATCH_OP_FAILED.exec(message)?.[1] ?? 0);
+      const ops = Array.isArray(args.ops) ? (args.ops as unknown[]) : [];
+      const rolledBackMotion = ops
+        .slice(0, failedAt)
+        .some(
+          op =>
+            typeof op === 'object' &&
+            op !== null &&
+            MOTION_WRITE_TOOLS.has((op as { tool?: unknown }).tool as string),
+        );
+      if (!rolledBackMotion || message.includes(R8_HEADING)) throw err;
+      throw new Error(
+        `${message}${R8_NOTICE_TEXT}\n(This batch applied Motion writes and then rolled them back, ` +
+          'so the ids it touched may have changed even though it failed.)',
+        { cause: err },
+      );
+    }
+  };
 
 /**
  * Append the plugin-skew warning to a tool result.

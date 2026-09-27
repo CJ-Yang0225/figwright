@@ -36,6 +36,7 @@ import {
   captureNotices,
   withEasingNotice,
   withLookupTimeoutNotice,
+  withRolledBackMotionNotice,
   withStalePresetTargetNotice,
   withMotionWriteNotice,
   withRoutingNotice,
@@ -219,8 +220,13 @@ const createMcpServer = (): McpServer => {
     const handler: ToolHandler = async args =>
       captureNotices(
         async () =>
-          withStalePresetTargetNotice(async () =>
-            withLookupTimeoutNotice(async () => run(normalizeIdArgs(args))),
+          withRolledBackMotionNotice(
+            spec.name,
+            args,
+          )(async () =>
+            withStalePresetTargetNotice(async () =>
+              withLookupTimeoutNotice(async () => run(normalizeIdArgs(args))),
+            ),
           ),
         (result, notices) =>
           withMotionWriteNotice(
