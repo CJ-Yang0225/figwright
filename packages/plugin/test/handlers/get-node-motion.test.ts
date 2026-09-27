@@ -105,3 +105,71 @@ describe('get_node_motion handler', () => {
     await expect(handler({ nodeId: 5 })).rejects.toThrow(/nodeId/);
   });
 });
+
+describe('get_node_motion handler in Dev Mode', () => {
+  /** What motionNode() reads back as. */
+  const MOTION = {
+    animationStyles: [{ styleId: 'S:1', name: 'Fade in' }],
+    animations: { OPACITY: { keyframes: [] } },
+    manualKeyframeTracks: { TRANSLATION_X: { keyframes: [] } },
+    timelines: [{ id: 'T:1', duration: 2, loopMode: 'LOOP' }],
+  };
+
+  it.each([
+    ['a zero playhead', 0],
+    ['a positive playhead', 1.5],
+  ])('reads %s alongside the full Motion state', async (_, playheadPosition) => {
+    const handler = createGetNodeMotionHandler(
+      fakeFigma({ editorType: 'dev', playheadPosition, node: motionNode('1:7') }),
+    );
+    const result = (await handler({ nodeId: '1:7' })) as GetNodeMotionResult;
+    expect(result).toEqual({ nodeId: '1:7', motion: MOTION, playheadPosition });
+  });
+
+  it('omits playheadPosition when no timeline is active, keeping the Motion state', async () => {
+    const handler = createGetNodeMotionHandler(
+      fakeFigma({ editorType: 'dev', node: motionNode('1:8') }),
+    );
+    const result = (await handler({ nodeId: '1:8' })) as GetNodeMotionResult;
+    expect(result).toEqual({ nodeId: '1:8', motion: MOTION });
+  });
+
+  it('omits playheadPosition when the editor exposes no Motion API', async () => {
+    const figmaCtx = {
+      editorType: 'dev',
+      getNodeByIdAsync: async () => motionNode('1:9'),
+    } as unknown as typeof figma;
+    const result = (await createGetNodeMotionHandler(figmaCtx)({
+      nodeId: '1:9',
+    })) as GetNodeMotionResult;
+    expect('playheadPosition' in result).toBe(false);
+    expect(result.motion).not.toBeNull();
+  });
+
+  it("lets the playhead getter's own error through", async () => {
+    const figmaCtx = {
+      editorType: 'dev',
+      motion: {
+        get playheadPosition(): never {
+          throw new Error('boom from playheadPosition');
+        },
+      },
+      getNodeByIdAsync: async () => motionNode('1:10'),
+    } as unknown as typeof figma;
+    await expect(createGetNodeMotionHandler(figmaCtx)({ nodeId: '1:10' })).rejects.toThrow(
+      'boom from playheadPosition',
+    );
+  });
+
+  it.each([
+    ['a page', plainNode('0:1')],
+    ['the document', plainNode('0:0')],
+    ['a deleted id', null],
+  ])('still returns motion: null for %s', async (_, node) => {
+    const handler = createGetNodeMotionHandler(
+      fakeFigma({ editorType: 'dev', playheadPosition: 1, node }),
+    );
+    const result = (await handler({ nodeId: 'X:1' })) as GetNodeMotionResult;
+    expect(result).toEqual({ nodeId: 'X:1', motion: null, playheadPosition: 1 });
+  });
+});

@@ -14,7 +14,8 @@ export const getNodeMotionTool: ToolSpec = {
     'manualKeyframeTracks, timelines } }, raw as Figma returns it, with motion: null when the id ' +
     'does not resolve or names a node without Motion (a page) — the two are not told apart. ' +
     "Also returns playheadPosition — the editor's Motion playhead in seconds, present only " +
-    'in the Figma Design editor with an active timeline. Use it as a keyframe timelinePosition when ' +
+    'with an active timeline in an editor whose plugin API exposes Motion (never in FigJam). Use it ' +
+    'as a keyframe timelinePosition when ' +
     'the user means "here", i.e. wherever they have scrubbed to.',
   inputSchema: z.object({
     nodeId: z.string().describe('Figma node id to read Motion state from'),

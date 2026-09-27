@@ -5,8 +5,9 @@ import { isMotionNode, readNodeMotion, readPlayheadPosition } from './motion-sha
 
 /**
  * Read a node's Motion state (applied styles, animations, manual keyframe tracks, timelines). Reads
- * don't gate on editorType — a node with no Motion support just returns `motion: null`, which is
- * honest in FigJam / Dev Mode. The deep keyframe structures are cloned to plain JSON.
+ * don't gate on editorType — a node with no Motion support just returns `motion: null`, and the
+ * playhead is reported wherever `figma.motion` exists (never in FigJam). The deep keyframe
+ * structures are cloned to plain JSON.
  */
 export const createGetNodeMotionHandler =
   (figmaCtx: typeof figma): SandboxToolHandler =>
