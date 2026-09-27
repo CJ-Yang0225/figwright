@@ -1162,6 +1162,31 @@ describe('batch Motion inverses', () => {
       }),
     ).rejects.toThrow(/Figma Design editor/);
   });
+
+  it.each([
+    { tool: 'apply_animation_style', params: { nodeId: '1:1', styleId: 's1' } },
+    {
+      tool: 'apply_manual_keyframe_track',
+      params: {
+        nodeId: '1:1',
+        field: { type: 'PROPERTY', name: 'OPACITY' },
+        track: { keyframes: [{ timelinePosition: 0, value: { type: 'FLOAT', value: 1 } }] },
+      },
+    },
+    { tool: 'set_timeline_duration', params: { nodeId: '1:1', timelineId: 't1', duration: 5 } },
+  ])('rejects $tool in Dev Mode before any mutation', async op => {
+    const { figmaCtx, addMotionNode } = makeMotionFigma('dev');
+    const a = addMotionNode('1:1', { timelines: [{ id: 't1', duration: 1 }] });
+    const handler = createBatchHandler(figmaCtx, motionWrites(figmaCtx));
+
+    await expect(handler({ ops: [op] })).rejects.toThrow(/Figma Design editor/);
+
+    expect(a.applyAnimationStyle).not.toHaveBeenCalled();
+    expect(a.removeAnimationStyle).not.toHaveBeenCalled();
+    expect(a.applyManualKeyframeTrack).not.toHaveBeenCalled();
+    expect(a.removeManualKeyframeTrack).not.toHaveBeenCalled();
+    expect(a.setTimelineDuration).not.toHaveBeenCalled();
+  });
 });
 
 // ── Newly batchable writes ───────────────────────────────────────────────────

@@ -1,7 +1,8 @@
 // Shared helpers for the Motion (beta) handlers: the node-capability guard, the editor gate, a
 // light keyframe-field check, and the raw read get_node_motion and get_motion_context share (a
 // plain-JSON extractor plus the keyframe and unknown-field checks). The Motion API lives on every
-// SceneNode, but only in the Figma Design editor — FigJam / Dev Mode have no animation engine.
+// SceneNode. Authoring is gated to the Figma Design editor; reads go wherever `figma.motion` is
+// present, except FigJam, which is never asked.
 
 import type { NodeMotion } from '@figwright/shared';
 
@@ -14,7 +15,7 @@ export const isMotionNode = (node: BaseNode): node is MotionNode => 'applyAnimat
 /**
  * Motion authoring and video export only work in the Figma Design editor. Throw a clear, actionable
  * error rather than letting the plugin API reject opaquely (or silently no-op) in FigJam / Dev
- * Mode.
+ * Mode. Writes only — reads go through {@link motionApi} instead.
  *
  * It deliberately does not name the current editor: every error leaving a handler passes through
  * the dispatcher, which appends `(editor: X — …)` for exactly the editors this gate fires in.
@@ -28,13 +29,24 @@ export const assertFigmaEditor = (figmaCtx: typeof figma, tool: string): void =>
 };
 
 /**
+ * `figma.motion` for a read, or `undefined` where it is known to be unavailable: FigJam, whose
+ * `figma.motion` has never been measured and so is never touched, and any editor that does not
+ * expose the API. Keyed on the API's presence rather than `editorType === 'figma'`, so Dev Mode
+ * reads whenever its plugin API carries Motion. An existence check, not try/catch: a getter or
+ * method that throws still reaches the caller.
+ */
+export const motionApi = (figmaCtx: typeof figma): MotionAPI | undefined =>
+  figmaCtx.editorType === 'figjam'
+    ? undefined
+    : (figmaCtx as { motion?: MotionAPI | undefined }).motion;
+
+/**
  * The Motion timeline playhead in seconds, or `undefined` when there's nothing to report — no
- * active timeline, or an editor with no animation engine at all. Gated on `editorType` rather than
- * try/catch so reads that deliberately don't assert the editor (get_node_motion) stay non-throwing
- * in FigJam / Dev Mode without swallowing a real error.
+ * active timeline, FigJam, or no Motion API at all. Editor-wide: every node, a page included, reads
+ * the same value (measured live).
  */
 export const readPlayheadPosition = (figmaCtx: typeof figma): number | undefined =>
-  figmaCtx.editorType === 'figma' ? figmaCtx.motion.playheadPosition : undefined;
+  motionApi(figmaCtx)?.playheadPosition;
 
 /**
  * Light semantic check the grounded MCP schema can't express: an effects INDEXED_ITEM must carry a
