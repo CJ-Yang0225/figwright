@@ -37,27 +37,24 @@ describe('create_variable handler', () => {
     expect(result).toEqual({ ok: true, variableId: 'V:0', name: 'color/primary' });
   });
 
-  // plugin-typings 1.133 widened VariableResolvedDataType with EASING/TIMING, but Figma's own
-  // createVariable still refuses them ("not currently available"), so they stay out of the allowlist
-  // and are rejected here rather than sent on to fail. Delete this test when Figma opens creation up.
-  it('rejects the motion resolvedTypes Figma cannot create yet', async () => {
+  // Figma opened EASING/TIMING creation in Plugin API Update 133, so both go through to Figma.
+  it('creates the motion resolvedTypes EASING and TIMING', async () => {
     for (const resolvedType of ['EASING', 'TIMING']) {
-      const createVariable = vi.fn<() => unknown>();
+      const collection = { id: 'VC:0' };
+      const createVariable = vi.fn<() => unknown>(() => ({ id: 'V:1', name: 'motion/enter' }));
       const f = {
         variables: {
-          getVariableCollectionByIdAsync: async () => ({ id: 'VC:0' }),
+          getVariableCollectionByIdAsync: async () => collection,
           createVariable,
         },
       } as unknown as typeof figma;
       // eslint-disable-next-line no-await-in-loop -- two fixed cases, sequential is fine
-      await expect(
-        createCreateVariableHandler(f)({
-          name: 'motion/enter',
-          collectionId: 'VC:0',
-          resolvedType,
-        }),
-      ).rejects.toThrow(/resolvedType/);
-      expect(createVariable).not.toHaveBeenCalled();
+      await createCreateVariableHandler(f)({
+        name: 'motion/enter',
+        collectionId: 'VC:0',
+        resolvedType,
+      });
+      expect(createVariable).toHaveBeenCalledWith('motion/enter', collection, resolvedType);
     }
   });
 

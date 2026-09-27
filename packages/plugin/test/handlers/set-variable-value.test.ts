@@ -90,8 +90,7 @@ describe('set_variable_value handler', () => {
 
   // An EASING curve is an object with a `type` but no `id`. Before 1.133 the converter treated every
   // non-color object as an alias, which turned this into { type: 'VARIABLE_ALIAS', id: undefined }.
-  // Real Figma rejects writing EASING/TIMING today, so this covers the conversion only — the value
-  // reaching setValueForMode intact is what we control; whether Figma accepts it is not.
+  // This covers the conversion only — the value reaching setValueForMode intact is what we control.
   it('passes an EASING curve through instead of mangling it into an alias', async () => {
     const setValueForMode = vi.fn<() => void>();
     const handler = createSetVariableValueHandler(

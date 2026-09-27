@@ -36,6 +36,7 @@ import { findReplacePlan } from './find-replace-text.js';
 import {
   assertFigmaEditor,
   assertKeyframeField,
+  assertMotionAliases,
   isMotionNode,
   toPlainJson,
 } from './motion-shared.js';
@@ -1405,6 +1406,9 @@ const applyAnimationStyleInverse: BatchInverse = {
   async capture(figmaCtx, params) {
     assertFigmaEditor(figmaCtx, 'batch/apply_animation_style');
     const id = stringParam(params, 'nodeId', 'apply_animation_style');
+    await assertMotionAliases(figmaCtx, 'batch/apply_animation_style', {
+      config: paramsOf(params).config,
+    });
     const node = await figmaCtx.getNodeByIdAsync(id);
     if (node === null || !isMotionNode(node)) {
       throw new Error(
@@ -1441,6 +1445,7 @@ const keyframeTrackInverse = (tool: string): BatchInverse => ({
         `batch/${tool}: only PROPERTY fields are batchable — indexed fills/strokes/effects tracks have no faithful snapshot`,
       );
     }
+    await assertMotionAliases(figmaCtx, `batch/${tool}`, { track: p.track });
     const node = await figmaCtx.getNodeByIdAsync(id);
     if (node === null || !isMotionNode(node)) {
       throw new Error(`batch/${tool}: node ${id} not found or does not support Motion`);

@@ -1,6 +1,9 @@
 import { ErrorCode } from '@figwright/shared';
 import { describe, expect, it } from 'vitest';
 
+import { applyAnimationStyleTool } from '../../src/tools/apply-animation-style.js';
+import { applyManualKeyframeTrackTool } from '../../src/tools/apply-manual-keyframe-track.js';
+import { createVariableTool } from '../../src/tools/create-variable.js';
 import {
   animationStyleConfigSchema,
   keyframeFieldSchema,
@@ -193,5 +196,67 @@ describe('custom easing without its parameters', () => {
 
   it('still accepts a keyframe with no easing at all', () => {
     expect(checkWireCall('apply_manual_keyframe_track', trackArgs(undefined))).toBeNull();
+  });
+});
+
+describe('variable aliases in Motion slots', () => {
+  const alias = { type: 'VARIABLE_ALIAS', id: 'VariableID:12:3' };
+  const trackArgs = {
+    nodeId: '1:2',
+    field: { type: 'PROPERTY', name: 'OPACITY' },
+    track: {
+      keyframes: [{ timelinePosition: 1, value: { type: 'FLOAT', value: 1 }, easing: alias }],
+    },
+  };
+  const styleArgs = {
+    nodeId: '1:2',
+    styleId: 's',
+    config: { props: { easing: alias, delay: alias, duration: alias, distance: alias } },
+  };
+
+  it('accepts an alias in a keyframe easing and in any preset prop, keeping its id', () => {
+    const track = applyManualKeyframeTrackTool.inputSchema.safeParse(trackArgs);
+    expect(track.data).toEqual(trackArgs);
+    const style = applyAnimationStyleTool.inputSchema.safeParse(styleArgs);
+    expect(style.data).toEqual(styleArgs);
+  });
+
+  it('accepts them in a batch op and at the /rpc boundary', () => {
+    for (const [tool, args] of [
+      ['apply_manual_keyframe_track', trackArgs],
+      ['apply_animation_style', styleArgs],
+    ] as const) {
+      expect(checkBatchOps({ ops: [{ tool, params: args }] })).toBeNull();
+      expect(checkWireCall(tool, args)).toBeNull();
+      expect(checkWireCall('batch', { ops: [{ tool, params: args }] })).toBeNull();
+    }
+  });
+
+  it('refuses an alias without a string id everywhere', () => {
+    for (const bad of [{ type: 'VARIABLE_ALIAS' }, { type: 'VARIABLE_ALIAS', id: 7 }]) {
+      const track = {
+        ...trackArgs,
+        track: { keyframes: [{ ...trackArgs.track.keyframes[0], easing: bad }] },
+      };
+      const style = { ...styleArgs, config: { props: { delay: bad } } };
+      expect(applyManualKeyframeTrackTool.inputSchema.safeParse(track).success).toBe(false);
+      expect(applyAnimationStyleTool.inputSchema.safeParse(style).success).toBe(false);
+      expect(checkWireCall('apply_manual_keyframe_track', track)?.code).toBe(
+        ErrorCode.InvalidParams,
+      );
+      expect(checkBatchOps({ ops: [{ tool: 'apply_animation_style', params: style }] })?.code).toBe(
+        ErrorCode.InvalidParams,
+      );
+    }
+  });
+});
+
+describe('create_variable', () => {
+  it('accepts the Motion resolvedTypes EASING and TIMING', () => {
+    for (const resolvedType of ['EASING', 'TIMING']) {
+      const args = { name: 'motion/enter', collectionId: 'VC:1', resolvedType };
+      expect(createVariableTool.inputSchema.safeParse(args).success).toBe(true);
+      expect(checkWireCall('create_variable', args)).toBeNull();
+    }
   });
 });
