@@ -47,7 +47,13 @@ export const MOTION_EASING_TYPES = [
 // value it does not play (measured live, segments 01 and 05): the record looks complete and is
 // wrong, and writing it back changes the animation. Refused here rather than defaulted, so the
 // agent picks the curve instead of us. A refinement adds no keyword to the advertised JSON Schema.
-const MISSING_EASING_PARAMS = {
+type EasingParam = 'easingFunctionSpring' | 'easingFunctionCubicBezier';
+type MissingParams = Record<
+  'CUSTOM_SPRING' | 'CUSTOM_CUBIC_BEZIER',
+  { path: EasingParam; message: string }
+>;
+
+const MISSING_EASING_PARAMS: MissingParams = {
   CUSTOM_SPRING: {
     path: 'easingFunctionSpring',
     message:
@@ -65,7 +71,48 @@ const MISSING_EASING_PARAMS = {
       'the four control points explicitly; for a straight line use type LINEAR; for the curve ' +
       'Figma reads back pass { x1: 0, y1: 0, x2: 0.58, y2: 1 }.',
   },
-} as const;
+};
+
+// The same refusal for an EASING variable's value (set_variable_value). What a variable holding
+// such a curve plays has not been measured, only that it reads back Figma's defaults, so these say
+// no more than that.
+export const MISSING_VARIABLE_EASING_PARAMS: MissingParams = {
+  CUSTOM_SPRING: {
+    path: 'easingFunctionSpring',
+    message:
+      'An EASING value of CUSTOM_SPRING needs easingFunctionSpring: { bounce } (0–1). Without it ' +
+      'Figma stores bounce 0.25 (measured), the same record a keyframe spring written without a ' +
+      'bounce reads back — and that keyframe plays LINEAR, so which curve plays is not known. Pass ' +
+      "the bounce explicitly; for Figma's default spring pass { bounce: 0.25 }.",
+  },
+  CUSTOM_CUBIC_BEZIER: {
+    path: 'easingFunctionCubicBezier',
+    message:
+      'An EASING value of CUSTOM_CUBIC_BEZIER needs easingFunctionCubicBezier: { x1, y1, x2, y2 }. ' +
+      'Without it Figma fills in points of its own, and a keyframe written that way plays other ' +
+      'than it reads back (measured). Pass the four control points explicitly.',
+  },
+};
+
+/**
+ * Refuse a CUSTOM_SPRING / CUSTOM_CUBIC_BEZIER that lacks its parameters. One rule for every input
+ * that takes a Motion easing — a keyframe, a preset prop, an EASING variable's value — so none of
+ * them lets through a curve Figma would fill in and then play differently.
+ */
+export const refuseMissingEasingParams =
+  (messages: MissingParams = MISSING_EASING_PARAMS) =>
+  (
+    easing: { type: string; easingFunctionSpring?: unknown; easingFunctionCubicBezier?: unknown },
+    ctx: z.RefinementCtx,
+  ): void => {
+    const missing =
+      easing.type === 'CUSTOM_SPRING' || easing.type === 'CUSTOM_CUBIC_BEZIER'
+        ? messages[easing.type]
+        : undefined;
+    if (missing !== undefined && easing[missing.path] === undefined) {
+      ctx.addIssue({ code: 'custom', path: [missing.path], message: missing.message });
+    }
+  };
 
 export const motionEasingSchema = z
   .object({
@@ -79,15 +126,7 @@ export const motionEasingSchema = z
       .describe('Normalized bounce 0–1; only for type "CUSTOM_SPRING"')
       .optional(),
   })
-  .superRefine((easing, ctx) => {
-    const missing =
-      easing.type === 'CUSTOM_SPRING' || easing.type === 'CUSTOM_CUBIC_BEZIER'
-        ? MISSING_EASING_PARAMS[easing.type]
-        : undefined;
-    if (missing !== undefined && easing[missing.path] === undefined) {
-      ctx.addIssue({ code: 'custom', path: [missing.path], message: missing.message });
-    }
-  })
+  .superRefine(refuseMissingEasingParams())
   .describe(
     'Motion easing: a named preset, or CUSTOM_CUBIC_BEZIER / CUSTOM_SPRING with its params',
   );
