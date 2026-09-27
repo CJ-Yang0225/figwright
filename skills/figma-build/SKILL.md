@@ -79,8 +79,9 @@ When the source carries animation — CSS `@keyframes` / `transition`, Framer Mo
 transition — author it as Figma **Motion (beta)** on the frame you built rather than dropping it:
 `apply_animation_style` (presets from `get_motion_styles`) or `apply_manual_keyframe_track` per
 property, `set_timeline_duration` for length. A staggered row is **one atomic `batch`** of
-`apply_animation_style` ops with increasing `config.timelineOffset` — not N calls (Figma has also
-refused a second preset in one frame; the reference has the fallback). Motion is
+`apply_animation_style` ops with increasing `config.timelineOffset` — not N calls (a preset in a
+frame that already animates has sometimes been refused, cause unknown; the reference has when, and
+the fallback). Motion is
 Figma-Design-only and keyframes attach to a top-level frame's layers, so build the frame first.
 → **[`references/motion.md`](./references/motion.md).**
 
