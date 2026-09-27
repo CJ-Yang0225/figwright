@@ -6,6 +6,7 @@ import {
   reportSkew,
   withEasingNotice,
   withLookupTimeoutNotice,
+  withStalePresetTargetNotice,
   withMotionWriteNotice,
   withSkewNotice,
 } from '../../src/tools/notices.js';
@@ -451,5 +452,47 @@ describe('withLookupTimeoutNotice', () => {
       ),
     );
     expect(message.indexOf(HEADING)).toBeLessThan(message.indexOf('PLUGIN OUT OF DATE'));
+  });
+});
+
+describe('withStalePresetTargetNotice', () => {
+  // Figma's own text, verbatim as measured live when a preset targeted a renumbered layer id.
+  const FIGMA = 'in applyAnimationStyle: Failed to resolve applied Figma animation style: Position';
+  const HEADING = 'THIS LAYER ID IS PROBABLY STALE';
+  const failWith = (err: unknown) => async (): Promise<CallToolResult> => {
+    throw err;
+  };
+  const messageOf = async (run: Promise<CallToolResult>): Promise<string> =>
+    run.then(
+      () => '',
+      (err: unknown) => (err as Error).message,
+    );
+  const count = (text: string, of: string): number => text.split(of).length - 1;
+
+  it.each([
+    ['on its own', FIGMA],
+    ['behind the relay prefixes', `INTERNAL_ERROR: INTERNAL_ERROR: ${FIGMA}`],
+    ['inside a batch op failure', `batch: op 1 (apply_animation_style) failed: ${FIGMA}`],
+  ])('explains the stale id %s, once, keeping Figma’s text', async (_, raised) => {
+    const message = await messageOf(withStalePresetTargetNotice(failWith(new Error(raised))));
+    expect(message.startsWith(raised)).toBe(true);
+    expect(count(message, HEADING)).toBe(1);
+    expect(message).toContain("re-read the frame's children");
+    expect(message).toContain('one batch');
+  });
+
+  it('leaves a missing styleId, other errors and successes untouched', async () => {
+    const missing = 'in applyAnimationStyle: No Figma animation style found for styleId: X';
+    expect(await messageOf(withStalePresetTargetNotice(failWith(new Error(missing))))).toBe(
+      missing,
+    );
+    const ok: CallToolResult = { content: [{ type: 'text', text: '{}' }] };
+    expect(await withStalePresetTargetNotice(async () => ok)).toBe(ok);
+  });
+
+  it('does not stack when the error passes through twice', async () => {
+    const once = await messageOf(withStalePresetTargetNotice(failWith(new Error(FIGMA))));
+    const twice = await messageOf(withStalePresetTargetNotice(failWith(new Error(once))));
+    expect(count(twice, HEADING)).toBe(1);
   });
 });
