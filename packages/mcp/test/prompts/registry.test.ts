@@ -35,6 +35,11 @@ describe('prompts registry', () => {
     // recognisable by the header the read tools actually append.
     expect(text).toContain('a measured fit, not Figma');
     expect(text).toContain('MOTION EASING MAY NOT BE WHAT FIGMA PLAYS');
+    // Where a variable alias survives a read and where it is already resolved, and the measured
+    // bounce → damping-ratio inverse, labelled as measured rather than documented.
+    expect(text).toContain('stays the alias in manualKeyframeTracks');
+    expect(text).toContain('reads back resolved in the style');
+    expect(text).toContain('ζ = 1 − bounce recovers the damping ratio');
   });
 
   it('interpolates a provided nodeId into the workflow', () => {

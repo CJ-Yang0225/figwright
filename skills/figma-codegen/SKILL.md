@@ -137,6 +137,11 @@ instead of a regeneration:
   `update: true` to accept the new design as the baseline.
 - Scope it by the same `nodeId` unit you coded from. `no-changes` means the design is untouched since
   the baseline — nothing to do.
+- **Except for Motion.** The snapshot is a full, deduped `get_design_context`, which carries only a
+  Motion summary (preset names, animated field names, timeline length) — so a changed keyframe time,
+  value or easing, or a preset's config or props, can come back `no-changes`, and instance children
+  the dedupe collapses carry no summary at all. To re-sync animation, re-run `get_motion_context` on
+  the root and compare it with what the code implements.
 
 ## Record verified mappings (so the next run reuses, not re-guesses)
 
