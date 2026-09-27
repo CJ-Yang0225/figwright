@@ -388,6 +388,30 @@ describe.skipIf(!existsSync(DIST_ENTRY))('MCP wire contract (built dist)', () =>
     }
   }, 30_000);
 
+  it('converts a physical spring through the built server to a fake plugin and back', async () => {
+    const server = new WireClient();
+    await server.start();
+    await server.handshake(LATEST_CLIENT_PROTOCOL);
+    const plugin = await connectFakePlugin({
+      port: server.port,
+      handlers: { normalize_motion_spring: () => ({ bounce: 0.5 }) },
+    });
+
+    try {
+      const res = await server.send('tools/call', {
+        name: 'normalize_motion_spring',
+        arguments: { mass: 1, stiffness: 100, damping: 10 },
+      });
+      const content = res.result?.content as { type: string; text: string }[];
+
+      expect(res.result?.isError).toBeUndefined();
+      expect(JSON.parse(content[0]?.text ?? '{}')).toEqual({ bounce: 0.5 });
+    } finally {
+      closeSocket(plugin);
+      await server.stop();
+    }
+  }, 30_000);
+
   it("explains Figma's by-id lookup timeout on the failure the agent sees", async () => {
     // The explanation is wired in index.ts; its unit tests would stay green with that line deleted.
     const figma =
