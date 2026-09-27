@@ -223,6 +223,75 @@ export const withLookupTimeoutNotice = async (
   }
 };
 
+/** The five Motion writes (`packages/mcp/src/tools/registry.ts`'s Motion block) that trigger R8. */
+const MOTION_WRITE_TOOLS: ReadonlySet<string> = new Set([
+  'apply_animation_style',
+  'remove_animation_style',
+  'apply_manual_keyframe_track',
+  'remove_manual_keyframe_track',
+  'set_timeline_duration',
+]);
+
+const R8_HEADING = '⚠️ MOTION LAYER IDS MAY HAVE CHANGED';
+const R8_NOTICE_TEXT =
+  `\n\n${R8_HEADING}\n` +
+  'This rides on every Motion write and export_video result, whether or not this particular call ' +
+  'changed any id — there is no way to tell from here. Seen live (cause undocumented): after a ' +
+  'keyframe-track write, a layer reappeared under its parent with a new id; a video export can ' +
+  "rebuild the frame's layers under new ids each time it runs. The id first seen kept resolving to " +
+  'the new layer, but an id picked up after one change stopped resolving after the next one, and a ' +
+  'read taken right after a write has returned the state from before it.\n' +
+  'Next: before reading or writing by id again, get fresh ids from get_motion_context (for a frame) ' +
+  'or search_nodes — do not keep using an id from before this call. If an id fails to resolve or ' +
+  'reads stale, re-fetch ids rather than retrying the same id, and do not assume the layer was ' +
+  'deleted.';
+
+/** True when at least one op in a `batch` call names a Motion write tool. */
+const batchHasMotionWrite = (args: Record<string, unknown>): boolean => {
+  const ops = args.ops;
+  if (!Array.isArray(ops)) return false;
+  return ops.some(
+    op =>
+      typeof op === 'object' &&
+      op !== null &&
+      MOTION_WRITE_TOOLS.has((op as { tool?: unknown }).tool as string),
+  );
+};
+
+/** Whether this call is one R8 fires on: a Motion write, `export_video`, or a batch with either. */
+const triggersMotionWriteNotice = (toolName: string, args: Record<string, unknown>): boolean => {
+  if (toolName === 'export_video' || MOTION_WRITE_TOOLS.has(toolName)) return true;
+  return toolName === 'batch' && batchHasMotionWrite(args);
+};
+
+/**
+ * Append the R8 layer-id notice to a successful Motion write or `export_video` result.
+ *
+ * This is a blanket reminder, not a detection: nothing here compares node state before and after,
+ * so it fires on every qualifying call regardless of whether that call actually changed an id — the
+ * cause of the id change is undocumented and there is no reliable signal to detect it from. It is
+ * withheld from error results (including `export_video`'s own `isError` path) because most
+ * rejections of these tools happen before any Figma mutation — the editor gate, an alias check,
+ * argument validation — and telling the agent an id may have changed when nothing was written would
+ * be actively misleading. `export_video`'s `path: null` (nothing encoded, but no error) still
+ * counts as success here.
+ */
+export const withMotionWriteNotice = (
+  toolName: string,
+  args: Record<string, unknown>,
+  result: CallToolResult,
+): CallToolResult => {
+  if (result.isError === true) return result;
+  if (!triggersMotionWriteNotice(toolName, args)) return result;
+  return {
+    ...result,
+    content: [
+      ...result.content,
+      { type: 'text' as const, text: R8_NOTICE_TEXT, annotations: { audience: ['assistant'] } },
+    ],
+  };
+};
+
 /**
  * Append the plugin-skew warning to a tool result.
  *

@@ -6,6 +6,7 @@ import {
   reportSkew,
   withEasingNotice,
   withLookupTimeoutNotice,
+  withMotionWriteNotice,
   withSkewNotice,
 } from '../../src/tools/notices.js';
 
@@ -255,6 +256,126 @@ describe('withEasingNotice', () => {
         (r, notices) => withEasingNotice('get_node_motion', withSkewNotice(r, notices.skew)),
       ),
     ).rejects.toThrow(/boom[\s\S]*OUT OF DATE/);
+  });
+});
+
+describe('withMotionWriteNotice', () => {
+  const WRITE_TOOLS = [
+    'apply_animation_style',
+    'remove_animation_style',
+    'apply_manual_keyframe_track',
+    'remove_manual_keyframe_track',
+    'set_timeline_duration',
+  ];
+
+  it.each(WRITE_TOOLS)('appends the R8 notice once to a successful %s result', name => {
+    const out = withMotionWriteNotice(name, {}, result('{"ok":true}'));
+
+    expect(out.content).toHaveLength(2);
+    expect(out.content[1]).toMatchObject({ annotations: { audience: ['assistant'] } });
+    expect(textOf(out, 1)).toMatch(/LAYER IDS MAY HAVE CHANGED/);
+  });
+
+  it('appends the notice to a successful export_video result, including path: null', () => {
+    const out = withMotionWriteNotice(
+      'export_video',
+      { nodeId: '1:1', format: 'MP4', outPath: '/tmp/x.mp4' },
+      result('{"nodeId":"1:1","format":"MP4","path":null,"reason":"static"}'),
+    );
+
+    expect(out.content).toHaveLength(2);
+    expect(textOf(out, 1)).toMatch(/LAYER IDS MAY HAVE CHANGED/);
+  });
+
+  it('appends the notice once for a batch with one Motion op, and once for several', () => {
+    const oneOp = withMotionWriteNotice(
+      'batch',
+      {
+        ops: [
+          { tool: 'set_fills', params: {} },
+          { tool: 'apply_animation_style', params: {} },
+        ],
+      },
+      result('{"ok":true,"results":[]}'),
+    );
+    expect(oneOp.content).toHaveLength(2);
+
+    const twoOps = withMotionWriteNotice(
+      'batch',
+      {
+        ops: [
+          { tool: 'apply_manual_keyframe_track', params: {} },
+          { tool: 'remove_animation_style', params: {} },
+        ],
+      },
+      result('{"ok":true,"results":[]}'),
+    );
+    expect(twoOps.content).toHaveLength(2);
+  });
+
+  it('leaves a batch with no Motion op, a non-Motion write, and every Motion read alone', () => {
+    const noMotionBatch = withMotionWriteNotice(
+      'batch',
+      {
+        ops: [
+          { tool: 'set_fills', params: {} },
+          { tool: 'rename_node', params: {} },
+        ],
+      },
+      result('{"ok":true,"results":[]}'),
+    );
+    expect(noMotionBatch.content).toHaveLength(1);
+
+    expect(withMotionWriteNotice('set_fills', {}, result('{"ok":true}')).content).toHaveLength(1);
+
+    for (const name of [
+      'get_node_motion',
+      'get_motion_context',
+      'get_motion_styles',
+      'normalize_motion_spring',
+    ]) {
+      expect(withMotionWriteNotice(name, {}, result('{"ok":true}')).content).toHaveLength(1);
+    }
+  });
+
+  it('leaves an error result alone, even for a triggering tool', () => {
+    const failed = { ...result('{"error":"nope"}'), isError: true };
+    expect(withMotionWriteNotice('apply_animation_style', {}, failed)).toBe(failed);
+    expect(
+      withMotionWriteNotice('batch', { ops: [{ tool: 'apply_animation_style' }] }, failed),
+    ).toBe(failed);
+  });
+
+  it('rides after the skew and easing notices without disturbing them', () => {
+    const ambiguousMotion = {
+      nodeId: '6:1',
+      motion: {
+        animationStyles: [],
+        animations: {},
+        manualKeyframeTracks: {
+          OPACITY: {
+            keyframes: [
+              {
+                timelinePosition: 0,
+                easing: { type: 'CUSTOM_SPRING', easingFunctionSpring: { bounce: 0.25 } },
+              },
+            ],
+          },
+        },
+        timelines: [],
+      },
+    };
+    const withEarlier = withEasingNotice(
+      'get_node_motion',
+      withSkewNotice(result(JSON.stringify(ambiguousMotion)), NOTICE),
+    );
+    const out = withMotionWriteNotice('apply_animation_style', {}, withEarlier);
+
+    expect(out.content).toHaveLength(4);
+    expect(textOf(out, 0)).toBe(JSON.stringify(ambiguousMotion));
+    expect(textOf(out, 1)).toContain(NOTICE);
+    expect(textOf(out, 2)).toMatch(/MOTION EASING/);
+    expect(textOf(out, 3)).toMatch(/LAYER IDS MAY HAVE CHANGED/);
   });
 });
 

@@ -33,7 +33,9 @@ design says is not.
    - `export_video` of the top-level frame as a visual reference of the animation to verify against.
      Read what you need by id first: an export was seen to re-create the frame's layers under new ids,
      after which an id picked up since an earlier change stopped resolving (re-run
-     `get_motion_context` to get current ones).
+     `get_motion_context` to get current ones). Every Motion write and `export_video` result now
+     carries a fixed `⚠️ MOTION LAYER IDS MAY HAVE CHANGED` notice as a standing reminder of exactly
+     this, whether or not that particular call actually changed anything.
 
 ## What the record says (plugin API typings)
 

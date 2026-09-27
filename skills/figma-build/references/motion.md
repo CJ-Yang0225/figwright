@@ -129,5 +129,8 @@ timeline and that one value you just changed shows up before trusting it. Re-rea
   under new ids. The ids first returned kept resolving to the new layers, but an id picked up after
   one change stopped resolving after the next, and a read right after a write once returned the state
   before it. Re-read ids (`get_motion_context`, `search_nodes`) before writing again rather than
-  reusing ones from before a write or an export.
+  reusing ones from before a write or an export. Every Motion write and `export_video` result now
+  carries a fixed `⚠️ MOTION LAYER IDS MAY HAVE CHANGED` notice saying the same thing — it is a
+  standing reminder, not a per-call detection, so it rides on every one of those results whether or
+  not that particular call changed anything.
 - Author only what the source actually animates; don't invent motion the code didn't specify.

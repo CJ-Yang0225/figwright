@@ -42,6 +42,7 @@ import {
   captureNotices,
   withEasingNotice,
   withLookupTimeoutNotice,
+  withMotionWriteNotice,
   withRoutingNotice,
   withSkewNotice,
 } from './tools/notices.js';
@@ -239,9 +240,13 @@ const createMcpServer = (): McpServer => {
       captureNotices(
         async () => withLookupTimeoutNotice(async () => run(normalizeIdArgs(args))),
         (result, notices) =>
-          withEasingNotice(
+          withMotionWriteNotice(
             spec.name,
-            withSkewNotice(withRoutingNotice(result, notices.routing), notices.skew),
+            args,
+            withEasingNotice(
+              spec.name,
+              withSkewNotice(withRoutingNotice(result, notices.routing), notices.skew),
+            ),
           ),
       );
     // The spec's own Zod object goes straight through: it is already the Standard Schema object the
