@@ -2,16 +2,10 @@ import type { VariableResult } from '@figwright/shared';
 
 import type { SandboxToolHandler } from '../dispatcher.js';
 
-// A subset of Figma's VariableResolvedDataType, which plugin-typings 1.133 widened with EASING and
-// TIMING. Those two are deliberately left out: Figma's own createVariable refuses them —
-// "EASING and TIMING variable creation is not currently available" — measured 2026-08-08 against an
-// up-to-date editor, so offering them would only be a guaranteed failure.
-//
-// The whole write side is gated, not just creation: setValueForMode likewise answers "EASING
-// variable editing is not supported". Such variables *can* be made in the Figma UI and read back
-// fine (get-variable-defs serializes their curves), so plugins see them as read-only for now.
-// Re-add both here and in the MCP tool's enum once Figma opens writing up.
-const RESOLVED_TYPES = ['BOOLEAN', 'FLOAT', 'STRING', 'COLOR'] as const;
+// Figma's VariableResolvedDataType. EASING and TIMING were refused by createVariable until Plugin API
+// Update 133 (2026-08-05) opened creating and editing them; measured working 2026-09-27. A new EASING
+// variable starts as CUSTOM_CUBIC_BEZIER (0.5, 0, 0.5, 1), a TIMING one at 0 (seconds).
+const RESOLVED_TYPES = ['BOOLEAN', 'FLOAT', 'STRING', 'COLOR', 'EASING', 'TIMING'] as const;
 type ResolvedType = (typeof RESOLVED_TYPES)[number];
 
 export const createCreateVariableHandler =

@@ -72,6 +72,101 @@ export const assertKeyframeField = (field: unknown, tool: string): void => {
   }
 };
 
+interface AliasSite {
+  path: string;
+  id: unknown;
+  /** The resolvedType the slot plays, or undefined where only existence has been measured. */
+  needs: 'EASING' | 'TIMING' | undefined;
+}
+
+const isAlias = (value: unknown): value is { type: 'VARIABLE_ALIAS'; id?: unknown } =>
+  typeof value === 'object' &&
+  value !== null &&
+  (value as { type?: unknown }).type === 'VARIABLE_ALIAS';
+
+const propNeeds = (prop: string): AliasSite['needs'] =>
+  prop === 'easing' ? 'EASING' : prop === 'delay' || prop === 'duration' ? 'TIMING' : undefined;
+
+/** Every VARIABLE_ALIAS in a keyframe track or an animation-style config, with what it must be. */
+const aliasSites = (input: { track?: unknown; config?: unknown }): AliasSite[] => {
+  const sites: AliasSite[] = [];
+  const keyframes = (input.track as { keyframes?: unknown } | undefined)?.keyframes;
+  if (Array.isArray(keyframes)) {
+    for (const [i, kf] of keyframes.entries()) {
+      const easing = (kf as { easing?: unknown } | null)?.easing;
+      if (isAlias(easing)) {
+        sites.push({ path: `track.keyframes[${i}].easing`, id: easing.id, needs: 'EASING' });
+      }
+    }
+  }
+  const props = (input.config as { props?: unknown } | undefined)?.props;
+  if (typeof props === 'object' && props !== null) {
+    for (const [prop, value] of Object.entries(props)) {
+      if (isAlias(value)) {
+        sites.push({ path: `config.props.${prop}`, id: value.id, needs: propNeeds(prop) });
+      }
+    }
+  }
+  return sites;
+};
+
+// What Figma does with each wrong binding it accepts, measured 2026-09-27 (Plugin API Update 133).
+const PLAYS_INSTEAD = {
+  EASING: 'play the segment LINEAR',
+  TIMING: 'not apply it (a delay bound to a FLOAT left timelineOffset at 0)',
+} as const;
+
+const REMEDY = {
+  EASING:
+    'Bind an EASING variable: create one with create_variable (resolvedType EASING) and set its ' +
+    'curve with set_variable_value, or use a local or already-imported EASING variable id from ' +
+    'get_variable_defs. Or pass a literal easing instead of an alias.',
+  TIMING:
+    'Bind a TIMING variable (its value is in seconds): create one with create_variable ' +
+    '(resolvedType TIMING) and set it with set_variable_value, or use a local or already-imported ' +
+    'TIMING variable id from get_variable_defs. Or pass a literal number of seconds.',
+} as const;
+
+/**
+ * Refuse a Motion variable binding Figma would accept and then not play as written: an easing bound
+ * to anything but an EASING variable plays LINEAR, a delay bound to a FLOAT is ignored, and a
+ * binding to a missing variable is kept as-is. Every one reads back as the alias it was given, so
+ * nothing downstream could notice. Checked here because only the sandbox can see a variable's type;
+ * callers run it before any mutation, direct and in batch capture alike.
+ */
+export const assertMotionAliases = async (
+  figmaCtx: typeof figma,
+  tool: string,
+  input: { track?: unknown; config?: unknown },
+): Promise<void> => {
+  const sites = aliasSites(input);
+  const variables = await Promise.all(
+    sites.map(({ id }) =>
+      typeof id === 'string' ? figmaCtx.variables.getVariableByIdAsync(id) : null,
+    ),
+  );
+  for (const [i, { path, id, needs }] of sites.entries()) {
+    const variable = variables[i] ?? null;
+    if (variable === null) {
+      throw new Error(
+        `${tool}: ${path} is bound to variable ${String(id)}, which does not exist in this file. ` +
+          (needs === undefined
+            ? 'Figma would keep a binding that resolves to nothing. Use a local or ' +
+              'already-imported variable id from get_variable_defs, or create one with ' +
+              'create_variable.'
+            : `Figma would accept it and ${PLAYS_INSTEAD[needs]}. ${REMEDY[needs]}`),
+      );
+    }
+    if (needs !== undefined && variable.resolvedType !== needs) {
+      throw new Error(
+        `${tool}: ${path} is bound to "${variable.name}" (${variable.id}), a ` +
+          `${variable.resolvedType} variable, but this slot takes ${needs === 'EASING' ? 'an' : 'a'} ${needs} variable — Figma ` +
+          `would accept it and ${PLAYS_INSTEAD[needs]}. ${REMEDY[needs]}`,
+      );
+    }
+  }
+};
+
 /**
  * Deep-clone a plugin-API structure to plain JSON. Motion's animation / keyframe objects are plain
  * data keyed by field name; this shields the RPC envelope from any live proxy the API may hand

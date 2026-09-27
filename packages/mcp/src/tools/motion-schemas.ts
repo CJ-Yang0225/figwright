@@ -1,3 +1,4 @@
+import { SerializedVariableAliasSchema } from '@figwright/shared';
 import { z } from 'zod';
 
 // Shared, grounded Zod schemas for Figma's Motion API (beta). Reused by every apply_* / set_* Motion
@@ -121,10 +122,26 @@ export const keyframeValueSchema = z
     'A keyframe value tagged by its animated field type (FLOAT for translate/scale/opacity, …)',
   );
 
+// A Motion slot bound to a variable. Tried before the easing member for clarity, though the strict
+// easing enum cannot take 'VARIABLE_ALIAS' anyway; a missing-params easing still fails only in the
+// easing member (the alias member aborts on its `type`), so Zod passes that member's issue through
+// unwrapped and the refusal above reaches the agent verbatim. Which variable type each slot needs
+// is checked in the sandbox, the only side that can see it.
+const motionAliasSchema = SerializedVariableAliasSchema.describe(
+  'Bind to a variable: an EASING variable for an easing, a TIMING variable (seconds) for a ' +
+    'delay / duration prop',
+);
+
 export const manualKeyframeInputSchema = z.object({
   id: z.string().optional(),
   timelinePosition: z.number().describe('Keyframe position on the timeline, in seconds'),
-  easing: motionEasingSchema.optional(),
+  easing: z
+    .union([motionAliasSchema, motionEasingSchema])
+    .describe(
+      'Easing of the segment arriving at this keyframe: a literal easing, or an EASING variable ' +
+        'alias { type: "VARIABLE_ALIAS", id }',
+    )
+    .optional(),
   value: keyframeValueSchema,
 });
 
@@ -215,7 +232,9 @@ export const keyframeFieldSchema = z
   );
 
 // AnimationStyleConfiguration — how an applied preset is tuned. `timelineOffset` is the lever for
-// staggered entrances (give each node index * step). VariableAlias-valued props are not modeled yet.
+// staggered entrances (give each node index * step). Any prop can be bound to a variable, as in the
+// SDK's AnimationStylePropValue; `duration` / `timelineOffset` themselves take numbers only, so a
+// TIMING variable goes in props.delay / props.duration.
 export const animationStyleConfigSchema = z.object({
   duration: z.number().positive().describe('Duration in seconds').optional(),
   timelineOffset: z
@@ -223,8 +242,15 @@ export const animationStyleConfigSchema = z.object({
     .describe('Start offset in seconds; use index * step for staggered entrances')
     .optional(),
   props: z
-    .record(z.string(), z.union([z.string(), z.number(), z.boolean(), motionEasingSchema]))
-    .describe('Preset-specific props (e.g. direction, distance, easing) keyed by prop name')
+    .record(
+      z.string(),
+      z.union([z.string(), z.number(), z.boolean(), motionAliasSchema, motionEasingSchema]),
+    )
+    .describe(
+      'Preset-specific props (e.g. direction, distance, easing, delay, duration) keyed by prop ' +
+        'name. Any prop may be a variable alias { type: "VARIABLE_ALIAS", id }: easing takes an ' +
+        'EASING variable, delay / duration a TIMING variable (seconds)',
+    )
     .optional(),
 });
 
