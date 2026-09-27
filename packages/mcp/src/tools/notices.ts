@@ -205,26 +205,52 @@ const LOOKUP_TIMEOUT_NOTICE =
   'most of the cases observed.';
 
 /**
- * Explain Figma's by-id lookup timeout wherever it surfaces in a tool error.
+ * Append guidance to any tool error that carries one of Figma's own misleading messages.
  *
- * Figma's text blames the network, which sends an agent into retries that fail the same way. It
- * arrives on its own, wrapped (`batch: capture failed …`), or behind relay prefixes, so it is
- * matched as a substring and kept verbatim; the explanation is appended once, and only to errors.
- * It lives in the server so it reaches a plugin build that predates it.
+ * The message arrives on its own, wrapped (`batch: capture failed …`), or behind relay prefixes, so
+ * it is matched as a substring and kept verbatim; the guidance is appended once, and only to
+ * errors. It lives in the server so it reaches a plugin build that predates it.
  */
-export const withLookupTimeoutNotice = async (
-  run: () => Promise<CallToolResult>,
-): Promise<CallToolResult> => {
-  try {
-    return await run();
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    if (!message.includes(FIGMA_LOOKUP_TIMEOUT) || message.includes(LOOKUP_TIMEOUT_HEADING)) {
-      throw err;
+const withErrorGuidance =
+  (figmaText: string, heading: string, notice: string) =>
+  async (run: () => Promise<CallToolResult>): Promise<CallToolResult> => {
+    try {
+      return await run();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (!message.includes(figmaText) || message.includes(heading)) throw err;
+      throw new Error(`${message}${notice}`, { cause: err });
     }
-    throw new Error(`${message}${LOOKUP_TIMEOUT_NOTICE}`, { cause: err });
-  }
-};
+  };
+
+/** Figma's by-id lookup timeout: its text blames the network, which sends an agent into retries. */
+export const withLookupTimeoutNotice = withErrorGuidance(
+  FIGMA_LOOKUP_TIMEOUT,
+  LOOKUP_TIMEOUT_HEADING,
+  LOOKUP_TIMEOUT_NOTICE,
+);
+
+const FIGMA_STALE_PRESET_TARGET = 'Failed to resolve applied Figma animation style';
+const STALE_PRESET_TARGET_HEADING = '⚠️ THIS LAYER ID IS PROBABLY STALE';
+const STALE_PRESET_TARGET_NOTICE =
+  `\n\n${STALE_PRESET_TARGET_HEADING}\n` +
+  "Every time Figma's error above has been observed (12 times, 2026-09-27/28), " +
+  'apply_animation_style was given a layer id from before a Motion write in the same frame. A ' +
+  "Motion write — a preset or a manual keyframe track — can renumber the frame's layers, the frame " +
+  'included. The old id still reads normally with get_node and get_node_motion, but a preset on it ' +
+  'fails with this error; the same call with the current id succeeded every time. A styleId that ' +
+  'does not exist gives a different error ("No Figma animation style found").\n' +
+  "Next: re-read the frame's children (get_node on the frame, or get_motion_context) and retry " +
+  "with the layer's current id. To give several layers in one frame a preset, put them all in one " +
+  'batch: three presets in one batch, by the ids the layers were created with, all applied ' +
+  '(measured, two runs).';
+
+/** A preset aimed at a layer id the frame's last Motion write renumbered. */
+export const withStalePresetTargetNotice = withErrorGuidance(
+  FIGMA_STALE_PRESET_TARGET,
+  STALE_PRESET_TARGET_HEADING,
+  STALE_PRESET_TARGET_NOTICE,
+);
 
 /** The five Motion writes (`packages/mcp/src/tools/registry.ts`'s Motion block) that trigger R8. */
 const MOTION_WRITE_TOOLS: ReadonlySet<string> = new Set([

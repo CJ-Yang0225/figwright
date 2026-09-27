@@ -36,26 +36,25 @@ Read the real values from the source (the keyframe stops, the duration, the easi
      Written to both, **the props won**: Position with `duration 1, timelineOffset 0.2` and
      `props { delay 0.5, duration 0.8 }` read back `duration 0.8`, `timelineOffset 0.5`. That was
      measured on Position only; other presets' precedence is unmeasured.
-   - **A refusal can name the wrong cause.** The error
-     `Failed to resolve applied Figma animation style: Position` says the style could not be
-     resolved, but the style exists. What triggers it is not known. It has been seen on 2026-09-27:
-     - when the target node already carried a manual keyframe track (Position on top-level frames,
-       calling the plugin API directly);
-     - through Figwright's tools, on rectangles in a new top-level frame, when a sibling already
-       carried a manual track (Position), and when a sibling already carried a preset — the second
-       preset in the frame, Position after Position and Opacity after Position.
+   - **`Failed to resolve applied Figma animation style: <name>` means a stale layer id.** A
+     Motion write — a preset or a manual keyframe track — can renumber the layers of its frame, the
+     frame included. The old id still reads normally (`get_node`, `get_node_motion`), but a preset
+     on it fails with this error, whose wording blames the style. Measured through Figwright,
+     2026-09-27/28: 12 of 12 presets aimed at an id from before a Motion write failed — after a
+     preset on a sibling, after a manual track on a sibling, and after a manual track on the same
+     node — and the same call with the layer's current id succeeded every time, the same node
+     included. A styleId that does not exist gives a different error (`No Figma animation style
+found`). So:
+     - after any Motion write, re-read the frame's children (`get_node` on the frame, or
+       `get_motion_context`) and use the ids you get back; Figwright's Motion write results say so;
+     - to give several layers of one frame a preset, put them in one `batch` (see Stagger) — the
+       ops in one batch applied by the ids the layers were created with;
+     - a node that already has a manual track takes a preset once its id is current, so the order
+       of presets and manual tracks does not matter.
 
-     Presets next to animated siblings have also gone through. The same day, a direct plugin-API run
-     applied nine presets in a row (eight Position, one Opacity) to nine rectangles in one new
-     top-level frame without an error. On 2026-09-22, through Figwright: in one frame whose text
-     layer carried a manual track, one Opacity and three Position presets on its siblings, and later
-     a Position on a rectangle after three more siblings got manual tracks; in a new frame whose
-     rectangles carried manual tracks, an Opacity on another rectangle. So a second preset in one
-     frame is not always refused. Applying the preset first and manual tracks after it has not been
-     refused: on the same node (2026-09-22) and on a sibling (2026-09-25, 2026-09-27). Before
-     applying, check whether the frame already animates (`get_motion_context` on the top-level
-     frame, or `get_node_motion` on the node for its `manualKeyframeTracks`); if it does, apply
-     presets before manual tracks, or author the motion as manual tracks.
+     Earlier records that read as "Figma refuses a second preset" (2026-09-27, through Figwright)
+     all used ids from before the previous write; the successes of that period used ids read after
+     it or ran in one batch.
 2. Otherwise **`apply_manual_keyframe_track`** per animated property. Map source → Figma field:
 
    | Source                                                      | Figma `field` (`{ type:'PROPERTY', name }`)        | `value` type       |
@@ -150,14 +149,10 @@ sequential calls.
 
 Manual keyframe tracks are also batchable (PROPERTY fields only). `set_timeline_duration` too.
 
-Presets on several siblings of one frame have gone through: three Position presets applied one by
-one through Figwright on 2026-09-22, and nine in a row calling the plugin API directly on
-2026-09-27. But on 2026-09-27, through Figwright, the second preset applied in a frame was refused
-with the misleading error described under step 1 (separate calls; a one-frame stagger `batch` was
-not run then), and why is not known. A `batch` is all-or-nothing, so one refused op rolls
-the whole stagger back. If that happens, author the stagger as manual keyframe tracks instead — one
-per node, its keyframe times shifted by `index * step` — which kept working in frames that already
-animated.
+The batch is also what keeps the stagger working. Three presets on sibling rectangles of one frame,
+in one batch, by the ids the layers were created with, all applied (measured 2026-09-28, two runs).
+Sent as separate calls, the second preset would carry an id the first one renumbered, and fail
+(step 1). If you do send separate calls, re-read the frame's children before each one.
 
 ## Edit or retime an existing track
 
@@ -171,8 +166,8 @@ what is there — never send only the keyframes you changed, or the rest of the 
    `animationStyles`, and its track in `animations` carries `animationPreset`), do not write the
    `animations` copy back as a manual track. A preset's timing is its `timelineOffset` and
    `duration`, and no tool edits an applied preset in place: `remove_animation_style` then
-   `apply_animation_style` is two writes, gives the preset a new `appliedStyleId`, and the re-apply
-   can meet the refusal under step 1 — say so before doing it.
+   `apply_animation_style` is two writes, gives the preset a new `appliedStyleId`, and the remove can renumber the layer, so re-read its id
+   before the re-apply (step 1) — say so before doing it.
 2. **State the transform.** Shift, `t' = t + Δ`, or scale about an anchor, `t' = a + (t − a)·s`,
    applied only to the track and keyframes the user named. Keep each keyframe's `value`, its
    `easing` (an alias stays the same alias), and the `id`s you read. Without a clear anchor or range,
