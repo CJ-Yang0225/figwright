@@ -38,13 +38,21 @@ Read the real values from the source (the keyframe stops, the duration, the easi
      measured on Position only; other presets' precedence is unmeasured.
    - **A refusal can name the wrong cause.** The error
      `Failed to resolve applied Figma animation style: Position` says the style could not be
-     resolved, but the style exists. Seen on 2026-09-27 (Position and Opacity, on new top-level
-     frames and rectangles inside them): when the target node already
-     carried a manual keyframe track, and when another node in the same top-level frame already
-     carried a manual track or a preset — a second preset in one frame included. Applying the preset
-     first and the manual tracks after it worked, on the same node and on a sibling. On 2026-09-22
-     the same file took a manual track and then four presets (one Opacity, three Position) on
-     siblings of one frame without an error, so what triggers the refusal is not known. Before
+     resolved, but the style exists. What triggers it is not known. It has been seen on 2026-09-27:
+     - when the target node already carried a manual keyframe track (Position on top-level frames,
+       calling the plugin API directly);
+     - through Figwright's tools, on rectangles in a new top-level frame, when a sibling already
+       carried a manual track (Position), and when a sibling already carried a preset — the second
+       preset in the frame, Position after Position and Opacity after Position.
+
+     Presets next to animated siblings have also gone through. The same day, a direct plugin-API run
+     applied nine presets in a row (eight Position, one Opacity) to nine rectangles in one new
+     top-level frame without an error. On 2026-09-22, through Figwright: in one frame whose text
+     layer carried a manual track, one Opacity and three Position presets on its siblings, and later
+     a Position on a rectangle after three more siblings got manual tracks; in a new frame whose
+     rectangles carried manual tracks, an Opacity on another rectangle. So a second preset in one
+     frame is not always refused. Applying the preset first and manual tracks after it has not been
+     refused: on the same node (2026-09-22) and on a sibling (2026-09-25, 2026-09-27). Before
      applying, check whether the frame already animates (`get_motion_context` on the top-level
      frame, or `get_node_motion` on the node for its `manualKeyframeTracks`); if it does, apply
      presets before manual tracks, or author the motion as manual tracks.
@@ -142,10 +150,11 @@ sequential calls.
 
 Manual keyframe tracks are also batchable (PROPERTY fields only). `set_timeline_duration` too.
 
-This stagger has both worked and failed in one file. On 2026-09-22 three Position presets applied
-one by one to siblings of one frame all succeeded; on 2026-09-27 the second preset applied in one
-frame was refused with the misleading error described under step 1 (direct calls; a
-one-frame stagger `batch` was not run then). A `batch` is all-or-nothing, so one refused op rolls
+Presets on several siblings of one frame have gone through: three Position presets applied one by
+one through Figwright on 2026-09-22, and nine in a row calling the plugin API directly on
+2026-09-27. But on 2026-09-27, through Figwright, the second preset applied in a frame was refused
+with the misleading error described under step 1 (separate calls; a one-frame stagger `batch` was
+not run then), and why is not known. A `batch` is all-or-nothing, so one refused op rolls
 the whole stagger back. If that happens, author the stagger as manual keyframe tracks instead — one
 per node, its keyframe times shifted by `index * step` — which kept working in frames that already
 animated.
