@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { MISSING_VARIABLE_EASING_PARAMS, refuseMissingEasingParams } from './motion-schemas.js';
 import type { ToolSpec } from './spec.js';
 
 export const SET_VARIABLE_VALUE_TOOL_NAME = 'set_variable_value';
@@ -18,14 +19,17 @@ const variableValue = z
     z.looseObject({ r: z.number(), g: z.number(), b: z.number(), a: z.number().optional() }),
     z.looseObject({ type: z.literal('VARIABLE_ALIAS'), id: z.string() }),
     // An EASING variable's curve. It must stay after the alias member: both are objects keyed by
-    // `type`, and this one accepts any string, so it would otherwise swallow aliases.
-    z.looseObject({
-      type: z.string(),
-      easingFunctionCubicBezier: z
-        .looseObject({ x1: z.number(), y1: z.number(), x2: z.number(), y2: z.number() })
-        .optional(),
-      easingFunctionSpring: z.looseObject({ bounce: z.number() }).optional(),
-    }),
+    // `type`, and this one accepts any string, so it would otherwise swallow aliases. It carries the
+    // same missing-parameter refusal as every other Motion easing input.
+    z
+      .looseObject({
+        type: z.string(),
+        easingFunctionCubicBezier: z
+          .looseObject({ x1: z.number(), y1: z.number(), x2: z.number(), y2: z.number() })
+          .optional(),
+        easingFunctionSpring: z.looseObject({ bounce: z.number() }).optional(),
+      })
+      .superRefine(refuseMissingEasingParams(MISSING_VARIABLE_EASING_PARAMS)),
   ])
   .describe(
     'boolean | number | string | { r,g,b,a } | { type:"VARIABLE_ALIAS", id } | { type: easing }',

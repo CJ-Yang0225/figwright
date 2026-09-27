@@ -12,6 +12,7 @@ import {
   MOTION_EASING_TYPES,
   motionEasingSchema,
 } from '../../src/tools/motion-schemas.js';
+import { setVariableValueTool } from '../../src/tools/set-variable-value.js';
 import { checkBatchOps, checkWireCall } from '../../src/tools/wire-schema.js';
 
 describe('motionEasingSchema', () => {
@@ -257,6 +258,46 @@ describe('create_variable', () => {
       const args = { name: 'motion/enter', collectionId: 'VC:1', resolvedType };
       expect(createVariableTool.inputSchema.safeParse(args).success).toBe(true);
       expect(checkWireCall('create_variable', args)).toBeNull();
+    }
+  });
+});
+
+describe('set_variable_value with an EASING value', () => {
+  // The EASING member was opened with create_variable, so it is one more input that takes a Motion
+  // easing — and it must refuse a custom curve without its parameters exactly as the others do.
+  const args = (value: unknown): unknown => ({ variableId: 'VariableID:1', modeId: '1:0', value });
+
+  for (const [type, param] of [
+    ['CUSTOM_SPRING', 'easingFunctionSpring'],
+    ['CUSTOM_CUBIC_BEZIER', 'easingFunctionCubicBezier'],
+  ] as const) {
+    it(`refuses ${type} without ${param}, directly, in a batch op and at /rpc`, () => {
+      const parsed = setVariableValueTool.inputSchema.safeParse(args({ type }));
+      expect(parsed.success).toBe(false);
+      expect(JSON.stringify(parsed.error?.issues)).toContain(param);
+      expect(JSON.stringify(parsed.error?.issues)).toContain('explicitly');
+      expect(checkWireCall('set_variable_value', args({ type }))?.code).toBe(
+        ErrorCode.InvalidParams,
+      );
+      expect(
+        checkBatchOps({ ops: [{ tool: 'set_variable_value', params: args({ type }) }] })?.code,
+      ).toBe(ErrorCode.InvalidParams);
+    });
+  }
+
+  it('still accepts complete curves, named easings, aliases and every other value kind', () => {
+    for (const value of [
+      { type: 'CUSTOM_SPRING', easingFunctionSpring: { bounce: 0.25 } },
+      { type: 'CUSTOM_CUBIC_BEZIER', easingFunctionCubicBezier: { x1: 0, y1: 0, x2: 0.58, y2: 1 } },
+      { type: 'EASE_OUT' },
+      { type: 'VARIABLE_ALIAS', id: 'VariableID:2' },
+      { r: 1, g: 0, b: 0, a: 1 },
+      true,
+      0.3,
+      'label',
+    ]) {
+      expect(setVariableValueTool.inputSchema.safeParse(args(value)).success).toBe(true);
+      expect(checkWireCall('set_variable_value', args(value))).toBeNull();
     }
   });
 });
