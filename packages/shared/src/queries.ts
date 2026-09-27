@@ -448,9 +448,10 @@ export const GetNodeMotionResultSchema = z.object({
   motion: NodeMotionSchema.nullable(),
   /**
    * The Motion timeline playhead, in seconds — editor-wide state, not a property of this node,
-   * hence a sibling of `motion` rather than a field inside it. Absent outside the Figma Design
-   * editor, or when no Motion timeline is active. Useful as the `timelinePosition` for a keyframe
-   * the user means to land "here".
+   * hence a sibling of `motion` rather than a field inside it. Absent in FigJam, in an editor whose
+   * plugin API does not expose Motion, or when no Motion timeline is active — so Dev Mode reads it
+   * too when its plugin API carries Motion (not yet seen live). Useful as the `timelinePosition`
+   * for a keyframe the user means to land "here".
    */
   playheadPosition: z.number().optional(),
 });

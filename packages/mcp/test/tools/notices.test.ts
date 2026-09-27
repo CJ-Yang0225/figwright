@@ -406,6 +406,15 @@ describe('withLookupTimeoutNotice', () => {
     expect(message).toContain('re-run the Figwright plugin');
   });
 
+  it('routes a variable or collection lookup to listing, not to retrying the id', async () => {
+    // R7 has hit variable-collection lookups for collections that existed (03 verify).
+    const message = await messageOf(
+      withLookupTimeoutNotice(failWith(new Error(`delete_variable_collection: ${FIGMA}`))),
+    );
+    expect(message).toContain('For a variable or variable collection');
+    expect(message).toContain('list them with get_variable_defs instead of retrying the id');
+  });
+
   it('explains a bare-string rejection too', async () => {
     const message = await messageOf(withLookupTimeoutNotice(failWith(FIGMA)));
     expect(message.startsWith(FIGMA)).toBe(true);

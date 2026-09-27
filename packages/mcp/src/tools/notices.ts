@@ -198,8 +198,11 @@ const LOOKUP_TIMEOUT_NOTICE =
   'the same plugin session has usually failed the same way.\n' +
   'Next: check that the id exists by walking to it, which kept working in that state — ' +
   'search_nodes, or get_node on its parent (for an instance sublayer `I<instance>;…`, get_node ' +
-  'on `<instance>`). If the id exists, ask the user to re-run the Figwright plugin in this Figma ' +
-  'file, then retry; that is what restored lookups in most of the cases observed.';
+  'on `<instance>`). For a variable or variable collection, list them with get_variable_defs ' +
+  'instead of retrying the id: collection lookups have timed out while the collection existed, ' +
+  'and the state has come and gone within one plugin session. If the id exists, ask the user to ' +
+  're-run the Figwright plugin in this Figma file, then retry; that is what restored lookups in ' +
+  'most of the cases observed.';
 
 /**
  * Explain Figma's by-id lookup timeout wherever it surfaces in a tool error.

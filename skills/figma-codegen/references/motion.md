@@ -30,6 +30,12 @@ design says is not.
    - `get_motion_styles` for each preset's prop descriptions (type, default, unit).
    - `get_variable_defs` to look up a `{ type: "VARIABLE_ALIAS", id }` in an easing or preset prop.
      Its `valuesByMode` are the variable's definitions, not the value resolved for this node's mode.
+     Where the alias shows up (measured): a keyframe easing bound to a variable stays the alias in
+     `manualKeyframeTracks`, while `animations` carries the curve resolved for the current mode. On
+     an applied preset, `props.duration` bound to a variable makes the style's own `duration`
+     disappear from the read, and `props.delay` bound to a TIMING variable reads back resolved in
+     the style's `timelineOffset`. An alias is a design token: implement it as one (a CSS custom
+     property, a shared constant) rather than inlining the resolved value.
    - `export_video` of the top-level frame as a visual reference of the animation to verify against.
      Read what you need by id first: an export was seen to re-create the frame's layers under new ids,
      after which an id picked up since an earlier change stopped resolving (re-run
@@ -52,7 +58,9 @@ design says is not.
   `props`; their keyframes are already in `animations`. A preset's `name` has been seen live as an
   unexpanded localization key (`motion.preset_name.rotation`) — identify presets by `styleId`. Prop
   units come from the preset's own descriptions (degrees, %, seconds) and may differ from the units of
-  the track values.
+  the track values. An applied style's `styleId` is not the one `get_motion_styles` lists (a preset
+  applied as `Position` read back as `CodeComponentId:2:24` in the test file), so to find its
+  descriptions match the entry by its props, and say which one you took.
 - `timelines` gives each timeline's `id` and `duration` in seconds — currently the containing
   top-level frame's. Nodes with the same timeline id share one clock; group by id, never by layer
   order.
@@ -100,6 +108,12 @@ Keep the two layers apart when you implement a spring and when you report it.
   physical duration does not carry over.
 - The shape follows the stored bounce alone, not the type: each named spring rendered like a
   `CUSTOM_SPRING` at its stored bounce, and `SLOW` like `CUSTOM_SPRING` 0.
+- Figma's own conversion from a physical spring (`normalize_motion_spring`, measured on one Figma
+  build over 15 inputs, not documented) is `bounce = max(0, 1 − ζ)` with
+  `ζ = damping / (2·√(mass·stiffness))`. Read the other way, `ζ = 1 − bounce` recovers the damping
+  ratio for a bounce above 0 — the same `ζ` as in the fitted curve below — while bounce 0 means only
+  `ζ ≥ 1` (critical or over-damped). Stiffness and mass are not recoverable: a library spring set
+  from `ζ` alone still needs a speed, which is the segment length here.
 
 **Fitted** — a curve fitted to those renders, not Figma documentation. With `u` the normalized time
 in the segment (0 → 1), `b` the bounce and `ζ = 1 − b`:
