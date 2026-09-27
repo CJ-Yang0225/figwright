@@ -62,10 +62,15 @@ Read the real values from the source (the keyframe stops, the duration, the easi
   (normalized 0–1), or a named preset (`GENTLE`/`QUICK`/`BOUNCY`/`SLOW`) when it's close. Figma stores
   only the type and bounce and stretches the spring over its segment (measured: one shape in normalized
   time over 0.5–2 s segments, settling by ~60 % of it; the shape follows the bounce alone, whatever the
-  type), so a source spring's physical duration does not carry over — choose the segment length. To
-  pick a bounce whose shape matches the source's, use the curve in the figma-codegen skill's
-  `references/motion.md` (Springs): a measured fit, not Figma documentation, valid for bounce 0 and
-  0.01–0.8. Say the result is an approximation and check the export.
+  type), so a source spring's physical duration does not carry over — choose the segment length either
+  way.
+  - Source gives **physical** spring parameters (`mass`/`stiffness`/`damping` — e.g. Framer Motion's
+    `stiffness`/`damping`) → call `normalize_motion_spring` for `bounce`; that's Figma's own
+    conversion, exact rather than approximated.
+  - Source gives no physical parameters at all (a bare `type:'spring'`, GSAP elastic) → use the curve
+    in the figma-codegen skill's `references/motion.md` (Springs) to pick a bounce whose shape matches:
+    a measured fit, not Figma documentation, valid for bounce 0 and 0.01–0.8. Say the result is an
+    approximation and check the export.
 - **Always pass the parameters.** `CUSTOM_CUBIC_BEZIER` without points and `CUSTOM_SPRING` without
   `bounce` are refused with an error, and nothing is written: Figma would default them and then play
   something other than what they read back (the spring plays linear). For a straight line use
