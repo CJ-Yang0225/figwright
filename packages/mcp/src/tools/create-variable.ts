@@ -63,7 +63,7 @@ export const createVariableTool: ToolSpec = {
       .optional()
       .describe(
         'Where Figma offers this variable in its picker, e.g. ["CORNER_RADIUS"] or ' +
-          '["FRAME_FILL","SHAPE_FILL"]. Omit for all scopes.',
+          '["FRAME_FILL","SHAPE_FILL"]. Omit for all scopes. Not available for EASING / TIMING.',
       ),
   }),
   kind: 'write',

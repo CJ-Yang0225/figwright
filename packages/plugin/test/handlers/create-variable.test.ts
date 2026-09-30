@@ -109,6 +109,30 @@ describe('create_variable handler', () => {
     expect(bare.variable.scopes).toEqual(['ALL_SCOPES']);
   });
 
+  // Figma accepts createVariable for these and only then refuses the scopes assignment, which would
+  // strand a half-configured variable — so the handler has to refuse before creating anything.
+  it('refuses scopes on EASING and TIMING before creating a variable', async () => {
+    for (const resolvedType of ['EASING', 'TIMING']) {
+      const createVariable = vi.fn<() => unknown>();
+      const f = {
+        variables: {
+          getVariableCollectionByIdAsync: async () => ({ id: 'VC:0' }),
+          createVariable,
+        },
+      } as unknown as typeof figma;
+      // eslint-disable-next-line no-await-in-loop -- two fixed cases, sequential is fine
+      await expect(
+        createCreateVariableHandler(f)({
+          name: 'motion/enter',
+          collectionId: 'VC:0',
+          resolvedType,
+          scopes: ['ALL_SCOPES'],
+        }),
+      ).rejects.toThrow(new RegExp(`${resolvedType} variable`));
+      expect(createVariable).not.toHaveBeenCalled();
+    }
+  });
+
   // An empty array is the interesting one: Figma reads it as "offered nowhere", so letting it
   // through would quietly hide the variable from every picker.
   it('rejects a scopes value that is not a non-empty array of names', async () => {

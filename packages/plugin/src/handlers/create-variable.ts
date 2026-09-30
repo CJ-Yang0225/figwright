@@ -37,6 +37,14 @@ export const createCreateVariableHandler =
       ) {
         throw new TypeError('create_variable: scopes must be a non-empty array of scope names');
       }
+      // Figma refuses scopes on EASING / TIMING ("Cannot set scopes on this variable type", measured
+      // 2026-09-30), but only when the property is assigned — after createVariable already ran. Refusing
+      // here keeps the failed call from leaving an unscoped variable behind.
+      if (p.resolvedType === 'EASING' || p.resolvedType === 'TIMING') {
+        throw new TypeError(
+          `create_variable: scopes cannot be set on ${p.resolvedType} variables — Figma refuses it; omit scopes`,
+        );
+      }
     }
 
     const collection = await figmaCtx.variables.getVariableCollectionByIdAsync(p.collectionId);
