@@ -1,3 +1,4 @@
+import { SerializedVariableAliasSchema } from '@figwright/shared';
 import { z } from 'zod';
 
 // Shared, grounded Zod schemas for Figma's Motion API (beta). Reused by every apply_* / set_* Motion
@@ -9,7 +10,8 @@ import { z } from 'zod';
 //
 // Idiom, matching the rest of the repo: keep these schemas simple (enum + describe + basic bounds)
 // and defer cross-field semantics (e.g. "an effects field needs `field` or `propertyId`") to the
-// hand-written type-guards in the plugin handlers — the repo does not use Zod .superRefine / .refine.
+// hand-written type-guards in the plugin handlers. The one refinement is the custom-easing
+// requirement below, which has to hold at every entry point, and only the schema sees them all.
 
 const rgba = z
   .object({
@@ -40,21 +42,58 @@ export const MOTION_EASING_TYPES = [
   'HOLD',
 ] as const;
 
+// A custom curve is only defined by its parameters, and Figma accepts the bare type and fills in
+// values of its own, so each custom type requires its own. A refinement rather than a discriminated
+// union: a missing required field aborts a union member, and a union whose members all abort
+// reports a bare "Invalid input", while a refinement's issue is the one non-aborted result and
+// reaches the agent verbatim — in a keyframe, a preset prop, an EASING variable's value, a batch op
+// and at the leader's /rpc alike.
+const CUSTOM_EASING_PARAMS = {
+  CUSTOM_CUBIC_BEZIER: ['easingFunctionCubicBezier', '{ x1, y1, x2, y2 }'],
+  CUSTOM_SPRING: ['easingFunctionSpring', '{ bounce } (0–1)'],
+} as const;
+
+const requireCustomEasingParams = (
+  easing: { type: string; easingFunctionCubicBezier?: unknown; easingFunctionSpring?: unknown },
+  ctx: z.RefinementCtx,
+): void => {
+  if (easing.type !== 'CUSTOM_CUBIC_BEZIER' && easing.type !== 'CUSTOM_SPRING') return;
+  const [param, shape] = CUSTOM_EASING_PARAMS[easing.type];
+  if (easing[param] === undefined) {
+    ctx.addIssue({
+      code: 'custom',
+      path: [param],
+      message: `${easing.type} needs ${param}: ${shape}`,
+    });
+  }
+};
+
+const easingParams = {
+  easingFunctionCubicBezier: z
+    .object({ x1: z.number(), y1: z.number(), x2: z.number(), y2: z.number() })
+    .describe('Bezier control points; required for type "CUSTOM_CUBIC_BEZIER"')
+    .optional(),
+  easingFunctionSpring: z
+    .object({ bounce: z.number().min(0).max(1) })
+    .describe('Normalized bounce 0–1; required for type "CUSTOM_SPRING"')
+    .optional(),
+};
+
 export const motionEasingSchema = z
-  .object({
-    type: z.enum(MOTION_EASING_TYPES),
-    easingFunctionCubicBezier: z
-      .object({ x1: z.number(), y1: z.number(), x2: z.number(), y2: z.number() })
-      .describe('Bezier control points; only for type "CUSTOM_CUBIC_BEZIER"')
-      .optional(),
-    easingFunctionSpring: z
-      .object({ bounce: z.number().min(0).max(1) })
-      .describe('Normalized bounce 0–1; only for type "CUSTOM_SPRING"')
-      .optional(),
-  })
+  .object({ type: z.enum(MOTION_EASING_TYPES), ...easingParams })
+  .superRefine(requireCustomEasingParams)
   .describe(
-    'Motion easing: a named preset, or CUSTOM_CUBIC_BEZIER / CUSTOM_SPRING with its params',
+    'Motion easing: a named preset, or CUSTOM_CUBIC_BEZIER / CUSTOM_SPRING with its parameters',
   );
+
+/**
+ * An EASING variable's value for set_variable_value: the same easing with the same requirement, but
+ * loose, as that tool's other object members are, so whatever else Figma's value carries goes
+ * through.
+ */
+export const variableEasingSchema = z
+  .looseObject({ type: z.enum(MOTION_EASING_TYPES), ...easingParams })
+  .superRefine(requireCustomEasingParams);
 
 // KeyframeValue — discriminated on `type`. FLOAT/BOOL/TEXT_DATA cover most property animations;
 // COLOR / VECTOR / the geometric point types cover paint stops and vector fields.
@@ -86,10 +125,24 @@ export const keyframeValueSchema = z
     'A keyframe value tagged by its animated field type (FLOAT for translate/scale/opacity, …)',
   );
 
+// A Motion slot bound to a variable. The easing union's `type` has no 'VARIABLE_ALIAS', so the two
+// members never overlap. Which variable type each slot needs is checked in the sandbox, the only
+// side that can see it.
+const motionAliasSchema = SerializedVariableAliasSchema.describe(
+  'Bind to a variable: an EASING variable for an easing, a TIMING variable (seconds) for a ' +
+    'delay / duration prop',
+);
+
 export const manualKeyframeInputSchema = z.object({
   id: z.string().optional(),
   timelinePosition: z.number().describe('Keyframe position on the timeline, in seconds'),
-  easing: motionEasingSchema.optional(),
+  easing: z
+    .union([motionAliasSchema, motionEasingSchema])
+    .describe(
+      'Easing of the segment arriving at this keyframe: a literal easing, or an EASING variable ' +
+        'alias { type: "VARIABLE_ALIAS", id }',
+    )
+    .optional(),
   value: keyframeValueSchema,
 });
 
@@ -180,7 +233,9 @@ export const keyframeFieldSchema = z
   );
 
 // AnimationStyleConfiguration — how an applied preset is tuned. `timelineOffset` is the lever for
-// staggered entrances (give each node index * step). VariableAlias-valued props are not modeled yet.
+// staggered entrances (give each node index * step). Any prop can be bound to a variable, as in the
+// SDK's AnimationStylePropValue; `duration` / `timelineOffset` themselves take numbers only, so a
+// TIMING variable goes in props.delay / props.duration.
 export const animationStyleConfigSchema = z.object({
   duration: z.number().positive().describe('Duration in seconds').optional(),
   timelineOffset: z
@@ -188,8 +243,15 @@ export const animationStyleConfigSchema = z.object({
     .describe('Start offset in seconds; use index * step for staggered entrances')
     .optional(),
   props: z
-    .record(z.string(), z.union([z.string(), z.number(), z.boolean(), motionEasingSchema]))
-    .describe('Preset-specific props (e.g. direction, distance, easing) keyed by prop name')
+    .record(
+      z.string(),
+      z.union([z.string(), z.number(), z.boolean(), motionAliasSchema, motionEasingSchema]),
+    )
+    .describe(
+      'Preset-specific props (e.g. direction, distance, easing, delay, duration) keyed by prop ' +
+        'name. Any prop may be a variable alias { type: "VARIABLE_ALIAS", id }: easing takes an ' +
+        'EASING variable, delay / duration a TIMING variable (seconds)',
+    )
     .optional(),
 });
 

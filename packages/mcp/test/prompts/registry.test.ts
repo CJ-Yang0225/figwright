@@ -28,6 +28,11 @@ describe('prompts registry', () => {
     expect(text).toContain('component_map');
     expect(text).toContain('token_map');
     expect(text).toContain('unmatchedProps');
+    // The static tree's motion summary is not evidence of no animation (dedupe drops instance
+    // children), so the inventory has to be taught, not merely allowed — with the measured rule a
+    // CSS port gets wrong by default.
+    expect(text).toContain('get_motion_context');
+    expect(text).toContain('easing shapes the segment arriving at it');
   });
 
   it('interpolates a provided nodeId into the workflow', () => {

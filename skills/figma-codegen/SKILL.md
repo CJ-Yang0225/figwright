@@ -137,6 +137,11 @@ instead of a regeneration:
   `update: true` to accept the new design as the baseline.
 - Scope it by the same `nodeId` unit you coded from. `no-changes` means the design is untouched since
   the baseline — nothing to do.
+- **Except for Motion.** The snapshot is a full, deduped `get_design_context`, which carries only a
+  Motion summary (preset names, animated field names, timeline length) — so a changed keyframe time,
+  value or easing, or a preset's config or props, can come back `no-changes`, and instance children
+  the dedupe collapses carry no summary at all. To re-sync animation, re-run `get_motion_context` on
+  the root and compare it with what the code implements.
 
 ## Record verified mappings (so the next run reuses, not re-guesses)
 
@@ -177,11 +182,14 @@ back by its join as highest authority:
 
 ## Motion (animation)
 
-When `get_design_context` (full detail) tags a node with a `motion` summary — applied
-animation-style presets, animated property fields, a timeline duration — carry it into the project's
-animation mechanism (CSS `@keyframes` / `transition`, Framer Motion, GSAP, Vue `<transition>`) instead
-of emitting a static component. `get_node_motion` returns the full keyframe detail when the summary
-isn't enough. Dropping a frame's animation is a fidelity miss, the same class as dropping a shadow.
+Call `get_motion_context` once on every root you implement: it inventories every Motion source in
+the subtree (instance children included) and says what it could not read. Only `coverage.status:
+"complete"` with no nodes means nothing animates — the `motion` summary in `get_design_context` is a
+hint that dedupe and budget can drop. Implement what it returns with the project's own animation
+mechanism, read it with the measured rules in the reference, treat anything neither states (how
+tracks combine, loop, trigger) as your assumption and say so, and verify the result against the
+source. Dropping a frame's
+animation is a fidelity miss, the same class as dropping a shadow.
 → [`references/motion.md`](./references/motion.md).
 
 ## Rules

@@ -23,9 +23,8 @@ const coerceToResolvedType = (raw: unknown, resolvedType: VariableResolvedDataTy
       throw new TypeError(`set_variable_value: "${raw}" is not valid JSON`);
     }
   }
-  // TIMING is a duration, so it coerces exactly like FLOAT — a bare string can only mean a number.
-  // Figma currently rejects writing TIMING/EASING at all (see create-variable.ts), so these two
-  // arms only shape the value on its way to that rejection; they are here for when it opens up.
+  // TIMING is a duration in seconds, so it coerces exactly like FLOAT — a bare string can only mean a
+  // number.
   if (resolvedType === 'FLOAT' || resolvedType === 'TIMING') {
     const n = Number(raw);
     if (Number.isNaN(n)) throw new TypeError(`set_variable_value: "${raw}" is not a number`);

@@ -1,12 +1,13 @@
 import type { ApplyAnimationStyleResult } from '@figwright/shared';
 
 import type { SandboxToolHandler } from '../dispatcher.js';
-import { assertFigmaEditor, isMotionNode } from './motion-shared.js';
+import { assertFigmaEditor, assertMotionAliases, isMotionNode } from './motion-shared.js';
 
 /**
  * Apply a Motion animation-style preset to a node. Returns the appliedStyleId Figma hands back —
  * the batch inverse removes exactly this instance on undo, so it must round-trip. `config` shape is
- * validated MCP-side (animationStyleConfigSchema); here we pass it through to the plugin API.
+ * validated MCP-side (animationStyleConfigSchema); here we check its variable aliases' types, which
+ * only the sandbox can see, and pass it through to the plugin API.
  */
 export const createApplyAnimationStyleHandler =
   (figmaCtx: typeof figma): SandboxToolHandler =>
@@ -22,6 +23,7 @@ export const createApplyAnimationStyleHandler =
       throw new TypeError('apply_animation_style: config must be an object');
     }
     assertFigmaEditor(figmaCtx, 'apply_animation_style');
+    await assertMotionAliases(figmaCtx, 'apply_animation_style', { config: p.config });
     const node = await figmaCtx.getNodeByIdAsync(p.nodeId);
     if (node === null || !isMotionNode(node)) {
       throw new Error(

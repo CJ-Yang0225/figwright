@@ -1,13 +1,18 @@
 import type { MutateResult } from '@figwright/shared';
 
 import type { SandboxToolHandler } from '../dispatcher.js';
-import { assertFigmaEditor, assertKeyframeField, isMotionNode } from './motion-shared.js';
+import {
+  assertFigmaEditor,
+  assertKeyframeField,
+  assertMotionAliases,
+  isMotionNode,
+} from './motion-shared.js';
 
 /**
  * Set a hand-authored keyframe track on a node for one field. `field` / `track` shapes are
  * validated MCP-side (keyframeFieldSchema / manualKeyframeTrackInputSchema); here we add the
- * field's effects semantic check and pass through to the plugin API, which replaces any existing
- * track on that field.
+ * field's effects semantic check and the easing aliases' variable types, and pass through to the
+ * plugin API, which replaces any existing track on that field.
  */
 export const createApplyManualKeyframeTrackHandler =
   (figmaCtx: typeof figma): SandboxToolHandler =>
@@ -21,6 +26,7 @@ export const createApplyManualKeyframeTrackHandler =
       throw new TypeError('apply_manual_keyframe_track: track must be an object');
     }
     assertFigmaEditor(figmaCtx, 'apply_manual_keyframe_track');
+    await assertMotionAliases(figmaCtx, 'apply_manual_keyframe_track', { track: p.track });
     const node = await figmaCtx.getNodeByIdAsync(p.nodeId);
     if (node === null || !isMotionNode(node)) {
       throw new Error(

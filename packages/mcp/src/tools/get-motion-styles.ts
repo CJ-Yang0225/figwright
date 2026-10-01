@@ -10,7 +10,8 @@ export const getMotionStylesTool: ToolSpec = {
     "List the file's available Figma Motion animation-style presets — the templates you apply with " +
     'apply_animation_style. Returns { styles: [{ styleId, name, description?, props? }] }; the styleId ' +
     'is what apply_animation_style takes and props lists a preset’s tunable keys. Motion is a beta ' +
-    'feature, only available in the Figma Design editor.',
+    'feature: this read works wherever the plugin API exposes it; applying presets needs the Figma ' +
+    'Design editor.',
   inputSchema: z.object({}),
   kind: 'read',
 };

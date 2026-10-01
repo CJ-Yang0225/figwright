@@ -246,6 +246,23 @@ describe.skipIf(!existsSync(DIST_ENTRY))('MCP wire contract (built dist)', () =>
     expect(mismatched.slice(0, 2)).toEqual([]);
   });
 
+  it('advertises a variable-alias member, with a required string id, in each Motion slot', () => {
+    // The equality above holds even if both sides lost the member together; this names it.
+    const schemaOf = (name: string): Record<string, any> =>
+      tools.find(t => t.name === name)?.inputSchema ?? {};
+    const aliasIn = (union: { anyOf?: Record<string, any>[] } | undefined): unknown =>
+      union?.anyOf?.find(m => m.properties?.type?.const === 'VARIABLE_ALIAS');
+    const expectAlias = (member: any): void => {
+      expect(member?.properties?.id).toMatchObject({ type: 'string' });
+      expect(member?.required).toEqual(expect.arrayContaining(['type', 'id']));
+    };
+
+    const track = schemaOf('apply_manual_keyframe_track').properties?.track;
+    expectAlias(aliasIn(track?.properties?.keyframes?.items?.properties?.easing));
+    const props = schemaOf('apply_animation_style').properties?.config?.properties?.props;
+    expectAlias(aliasIn(props?.additionalProperties));
+  });
+
   it('advertises the JSON Schema dialect the current spec revision expects', () => {
     const dialects = new Set(tools.map(t => t.inputSchema.$schema));
     expect([...dialects]).toEqual(['https://json-schema.org/draft/2020-12/schema']);
@@ -365,6 +382,135 @@ describe.skipIf(!existsSync(DIST_ENTRY))('MCP wire contract (built dist)', () =>
       const content = res.result?.content as { type: string; text: string }[];
 
       expect(content).toHaveLength(1);
+    } finally {
+      closeSocket(plugin);
+      await server.stop();
+    }
+  }, 30_000);
+
+  it('carries raw Motion through the built server untouched, fields it has never seen included', async () => {
+    // The inventory's contract is that nothing between the Figma API and the agent reshapes Motion
+    // data. Every hop — msgpack, the relay, the SDK's result handling — is real here, so a
+    // schema-driven strip or a lossy re-encode anywhere on the way would show up as a diff.
+    const inventory = {
+      rootNodeId: '1:1',
+      coverage: { status: 'partial', visitedNodes: 3, animatedNodes: 1, reasons: ['read-error'] },
+      diagnostics: [{ nodeId: '1:3', code: 'read-error', message: 'getter exploded' }],
+      nodes: [
+        {
+          nodeId: 'I1:2;4:5',
+          parentId: '1:2',
+          name: 'Card title',
+          type: 'TEXT',
+          motion: {
+            animationStyles: [],
+            animations: {
+              OPACITY: {
+                baseValue: { type: 'FLOAT', value: 0 },
+                timelineDuration: 4,
+                loopMode: 'PING_PONG',
+                tracks: [
+                  {
+                    id: 't',
+                    keyframeOperation: 'SET',
+                    keyframes: [
+                      { id: 'a', timelinePosition: 1, value: { type: 'FLOAT', value: 0 } },
+                      { id: 'b', timelinePosition: 1.25, value: { type: 'FLOAT', value: 1 } },
+                    ],
+                  },
+                ],
+              },
+              effects: { 1: { RADIUS: { tracks: [] } } },
+            },
+            manualKeyframeTracks: {},
+            timelines: [{ id: 'T:1', duration: 4, trigger: 'ON_LOAD' }],
+          },
+        },
+      ],
+    };
+    const server = new WireClient();
+    await server.start();
+    await server.handshake(LATEST_CLIENT_PROTOCOL);
+    const plugin = await connectFakePlugin({
+      port: server.port,
+      handlers: { get_motion_context: () => inventory },
+    });
+
+    try {
+      const res = await server.send('tools/call', {
+        name: 'get_motion_context',
+        arguments: { nodeId: '1:1' },
+      });
+      const content = res.result?.content as { type: string; text: string }[];
+
+      expect(res.result?.isError).toBeUndefined();
+      expect(content).toHaveLength(1);
+      expect(JSON.parse(content[0]?.text ?? '{}')).toEqual(inventory);
+    } finally {
+      closeSocket(plugin);
+      await server.stop();
+    }
+  }, 30_000);
+
+  it('hands a Motion variable alias to the plugin with its id, direct and in a batch', async () => {
+    // A schema member that parsed the alias but stripped `id` would still accept the call; only what
+    // reaches the plugin shows the binding survived the SDK's parse and the relay.
+    const alias = { type: 'VARIABLE_ALIAS', id: 'VariableID:12:3' };
+    const trackOp = {
+      nodeId: '1:2',
+      field: { type: 'PROPERTY', name: 'OPACITY' },
+      track: {
+        keyframes: [{ timelinePosition: 1, value: { type: 'FLOAT', value: 1 }, easing: alias }],
+      },
+    };
+    const styleOp = {
+      nodeId: '1:3',
+      styleId: 's',
+      config: { props: { easing: alias, delay: alias, distance: alias } },
+    };
+    const received: Record<string, unknown> = {};
+    const server = new WireClient();
+    await server.start();
+    await server.handshake(LATEST_CLIENT_PROTOCOL);
+    const plugin = await connectFakePlugin({
+      port: server.port,
+      handlers: {
+        apply_manual_keyframe_track: params => {
+          received.apply_manual_keyframe_track = params;
+          return { ok: true, nodeId: '1:2' };
+        },
+        apply_animation_style: params => {
+          received.apply_animation_style = params;
+          return { ok: true, nodeId: '1:3', appliedStyleId: 'A:1' };
+        },
+        batch: params => {
+          received.batch = params;
+          return { ok: true, results: [] };
+        },
+      },
+    });
+
+    try {
+      const ops = [
+        { tool: 'apply_manual_keyframe_track', params: trackOp },
+        { tool: 'apply_animation_style', params: styleOp },
+      ];
+      for (const [name, args] of [
+        ['apply_manual_keyframe_track', trackOp],
+        ['apply_animation_style', styleOp],
+        ['batch', { ops }],
+      ] as const) {
+        // eslint-disable-next-line no-await-in-loop -- one plugin, calls in order
+        const res = await server.send('tools/call', { name, arguments: args });
+        expect(res.result?.isError).toBeUndefined();
+      }
+
+      // The leader stamps a requestId on every write for idempotency; the rest must arrive as sent.
+      expect(received).toEqual({
+        apply_manual_keyframe_track: { ...trackOp, requestId: expect.any(String) },
+        apply_animation_style: { ...styleOp, requestId: expect.any(String) },
+        batch: { ops, requestId: expect.any(String) },
+      });
     } finally {
       closeSocket(plugin);
       await server.stop();

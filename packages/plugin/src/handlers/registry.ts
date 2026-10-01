@@ -1,5 +1,6 @@
 import type { SandboxHandlers } from '../dispatcher.js';
 import { createIdempotencyCache, idempotent } from '../idempotency.js';
+import { withInstanceIdLookup } from '../node-lookup.js';
 import { createAddComponentPropertyHandler } from './add-component-property.js';
 import { createAddPageHandler } from './add-page.js';
 import { createAddVariableModeHandler } from './add-variable-mode.js';
@@ -45,6 +46,7 @@ import { createGetDocumentHandler } from './get-document.js';
 import { createGetFontsHandler } from './get-fonts.js';
 import { createGetLocalComponentsHandler } from './get-local-components.js';
 import { createGetMetadataHandler } from './get-metadata.js';
+import { createGetMotionContextHandler } from './get-motion-context.js';
 import { createGetMotionStylesHandler } from './get-motion-styles.js';
 import { createGetNodeMotionHandler } from './get-node-motion.js';
 import { createGetNodeHandler } from './get-node.js';
@@ -116,7 +118,8 @@ import { createUpdateVariableCollectionHandler } from './update-variable-collect
  * Wiring lives here (not in code.ts) so a registry test can enumerate the keys and assert they
  * match the server's advertised tools — a new tool can't be half-wired without a test failing.
  */
-export const createSandboxHandlers = (figmaCtx: typeof figma): SandboxHandlers => {
+export const createSandboxHandlers = (figmaApi: typeof figma): SandboxHandlers => {
+  const figmaCtx = withInstanceIdLookup(figmaApi);
   const cache = createIdempotencyCache();
 
   const rawWrites: SandboxHandlers = {
@@ -230,6 +233,7 @@ export const createSandboxHandlers = (figmaCtx: typeof figma): SandboxHandlers =
     get_reactions: createGetReactionsHandler(figmaCtx),
     get_motion_styles: createGetMotionStylesHandler(figmaCtx),
     get_node_motion: createGetNodeMotionHandler(figmaCtx),
+    get_motion_context: createGetMotionContextHandler(figmaCtx),
     list_files: createListFilesHandler(figmaCtx),
     get_design_context: createGetDesignContextHandler(figmaCtx),
     get_screenshot: createGetScreenshotHandler(figmaCtx),

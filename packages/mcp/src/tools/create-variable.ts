@@ -40,29 +40,28 @@ const VARIABLE_SCOPES = [
 
 export const createVariableTool: ToolSpec = {
   name: CREATE_VARIABLE_TOOL_NAME,
-  // EASING / TIMING are intentionally absent from the enum: Figma's createVariable rejects them
-  // outright, so listing them would only steer an agent into a call that cannot succeed. The
-  // description still names them so an agent that sees such a variable knows why it can't make one.
-  // See the note in the sandbox handler (packages/plugin/src/handlers/create-variable.ts).
   description:
-    'Create a variable in a collection with resolvedType BOOLEAN / FLOAT / STRING / COLOR. The ' +
-    'variable starts empty — set per-mode values with set_variable_value, then attach it with ' +
-    'bind_variable_to_node or bind_variable_to_paint. EASING and TIMING variables cannot be created ' +
-    'by plugins at all — Figma rejects it; they can only be made in the Figma UI. Optionally pass ' +
+    'Create a variable in a collection with resolvedType BOOLEAN / FLOAT / STRING / COLOR / EASING ' +
+    '/ TIMING. Set per-mode values with set_variable_value, then attach it with ' +
+    'bind_variable_to_node or bind_variable_to_paint — or, for EASING (a Motion curve) and TIMING ' +
+    '(seconds), as a { type: "VARIABLE_ALIAS", id } in a Motion easing or a preset\'s delay / ' +
+    'duration. Optionally pass ' +
     'scopes to narrow where Figma offers the variable in its picker (a radius token scoped to ' +
     'CORNER_RADIUS stops being suggested for width or gap); omit it to leave the variable in every ' +
     "scope, which is Figma's default. Returns { ok, variableId, name }.",
   inputSchema: z.object({
     name: z.string().describe('Variable name, e.g. "color/primary"'),
     collectionId: z.string().describe('Variable collection id'),
-    resolvedType: z.enum(['BOOLEAN', 'FLOAT', 'STRING', 'COLOR']).describe('Variable data type'),
+    resolvedType: z
+      .enum(['BOOLEAN', 'FLOAT', 'STRING', 'COLOR', 'EASING', 'TIMING'])
+      .describe('Variable data type'),
     scopes: z
       .array(z.enum(VARIABLE_SCOPES))
       .nonempty()
       .optional()
       .describe(
         'Where Figma offers this variable in its picker, e.g. ["CORNER_RADIUS"] or ' +
-          '["FRAME_FILL","SHAPE_FILL"]. Omit for all scopes.',
+          '["FRAME_FILL","SHAPE_FILL"]. Omit for all scopes. Not available for EASING / TIMING.',
       ),
   }),
   kind: 'write',

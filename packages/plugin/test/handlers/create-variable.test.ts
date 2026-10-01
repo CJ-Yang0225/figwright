@@ -37,27 +37,24 @@ describe('create_variable handler', () => {
     expect(result).toEqual({ ok: true, variableId: 'V:0', name: 'color/primary' });
   });
 
-  // plugin-typings 1.133 widened VariableResolvedDataType with EASING/TIMING, but Figma's own
-  // createVariable still refuses them ("not currently available"), so they stay out of the allowlist
-  // and are rejected here rather than sent on to fail. Delete this test when Figma opens creation up.
-  it('rejects the motion resolvedTypes Figma cannot create yet', async () => {
+  // Figma refused EASING/TIMING creation until it opened both to plugins; measured accepted 2026-10-02.
+  it('creates the motion resolvedTypes EASING and TIMING', async () => {
     for (const resolvedType of ['EASING', 'TIMING']) {
-      const createVariable = vi.fn<() => unknown>();
+      const collection = { id: 'VC:0' };
+      const createVariable = vi.fn<() => unknown>(() => ({ id: 'V:1', name: 'motion/enter' }));
       const f = {
         variables: {
-          getVariableCollectionByIdAsync: async () => ({ id: 'VC:0' }),
+          getVariableCollectionByIdAsync: async () => collection,
           createVariable,
         },
       } as unknown as typeof figma;
       // eslint-disable-next-line no-await-in-loop -- two fixed cases, sequential is fine
-      await expect(
-        createCreateVariableHandler(f)({
-          name: 'motion/enter',
-          collectionId: 'VC:0',
-          resolvedType,
-        }),
-      ).rejects.toThrow(/resolvedType/);
-      expect(createVariable).not.toHaveBeenCalled();
+      await createCreateVariableHandler(f)({
+        name: 'motion/enter',
+        collectionId: 'VC:0',
+        resolvedType,
+      });
+      expect(createVariable).toHaveBeenCalledWith('motion/enter', collection, resolvedType);
     }
   });
 
@@ -110,6 +107,44 @@ describe('create_variable handler', () => {
     const bare = mk();
     await bare.handler({ name: 'radius/md', collectionId: 'VC:0', resolvedType: 'FLOAT' });
     expect(bare.variable.scopes).toEqual(['ALL_SCOPES']);
+  });
+
+  // Figma creates the variable and only then refuses the scopes assignment (measured: any scope on
+  // EASING / TIMING, CORNER_RADIUS on a COLOR, FRAME_FILL on a BOOLEAN), so the refusal has to undo
+  // the creation or the failed call leaves a stray, unscoped variable behind.
+  it('removes the variable it created when Figma refuses its scopes', async () => {
+    for (const [resolvedType, figmaMessage] of [
+      ['EASING', 'in set_scopes: Cannot set scopes on this variable type'],
+      ['COLOR', 'in set_scopes: Invalid scope for this variable type'],
+    ] as const) {
+      const remove = vi.fn<() => void>();
+      const variable = {
+        id: 'V:1',
+        name: 'motion/enter',
+        remove,
+        set scopes(_: string[]) {
+          throw new Error(figmaMessage);
+        },
+      };
+      const f = {
+        variables: {
+          getVariableCollectionByIdAsync: async () => ({ id: 'VC:0' }),
+          createVariable: () => variable,
+        },
+      } as unknown as typeof figma;
+      // eslint-disable-next-line no-await-in-loop -- two fixed cases, sequential is fine
+      await expect(
+        createCreateVariableHandler(f)({
+          name: 'motion/enter',
+          collectionId: 'VC:0',
+          resolvedType,
+          scopes: ['CORNER_RADIUS'],
+        }),
+      ).rejects.toThrow(
+        `on the new ${resolvedType} variable (${figmaMessage}), so nothing was created`,
+      );
+      expect(remove).toHaveBeenCalledOnce();
+    }
   });
 
   // An empty array is the interesting one: Figma reads it as "offered nowhere", so letting it

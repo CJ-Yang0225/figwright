@@ -2,16 +2,10 @@ import type { VariableResult } from '@figwright/shared';
 
 import type { SandboxToolHandler } from '../dispatcher.js';
 
-// A subset of Figma's VariableResolvedDataType, which plugin-typings 1.133 widened with EASING and
-// TIMING. Those two are deliberately left out: Figma's own createVariable refuses them —
-// "EASING and TIMING variable creation is not currently available" — measured 2026-08-08 against an
-// up-to-date editor, so offering them would only be a guaranteed failure.
-//
-// The whole write side is gated, not just creation: setValueForMode likewise answers "EASING
-// variable editing is not supported". Such variables *can* be made in the Figma UI and read back
-// fine (get-variable-defs serializes their curves), so plugins see them as read-only for now.
-// Re-add both here and in the MCP tool's enum once Figma opens writing up.
-const RESOLVED_TYPES = ['BOOLEAN', 'FLOAT', 'STRING', 'COLOR'] as const;
+// Figma's VariableResolvedDataType. EASING and TIMING were refused by createVariable on 2026-08-08
+// and accepted on 2026-10-02 (measured both times). A new EASING variable starts as
+// CUSTOM_CUBIC_BEZIER (0.5, 0, 0.5, 1), a TIMING one at 0 seconds (measured).
+const RESOLVED_TYPES = ['BOOLEAN', 'FLOAT', 'STRING', 'COLOR', 'EASING', 'TIMING'] as const;
 type ResolvedType = (typeof RESOLVED_TYPES)[number];
 
 export const createCreateVariableHandler =
@@ -56,8 +50,24 @@ export const createCreateVariableHandler =
     );
 
     // Scopes are set after creation: createVariable takes no scope argument, and assigning the
-    // property is how Figma exposes it.
-    if (p.scopes !== undefined) variable.scopes = p.scopes as VariableScope[];
+    // property is how Figma exposes it. Figma refuses a scope that does not fit the type — "Invalid
+    // scope for this variable type" for, say, CORNER_RADIUS on a COLOR, "Cannot set scopes on this
+    // variable type" for any scope on EASING / TIMING (measured) — and by then the variable exists, so
+    // a refusal removes it again: the call either creates the variable it describes or nothing.
+    if (p.scopes !== undefined) {
+      try {
+        variable.scopes = p.scopes as VariableScope[];
+      } catch (err) {
+        variable.remove();
+        const reason = err instanceof Error ? err.message : String(err);
+        throw new Error(
+          `create_variable: Figma refused scopes ${JSON.stringify(p.scopes)} on the new ` +
+            `${String(p.resolvedType)} variable (${reason}), so nothing was created. EASING and ` +
+            'TIMING variables take no scopes; other types take only scopes that fit them.',
+          { cause: err },
+        );
+      }
+    }
 
     const result: VariableResult = { ok: true, variableId: variable.id, name: variable.name };
     return result;

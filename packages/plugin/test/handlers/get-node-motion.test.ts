@@ -3,16 +3,23 @@ import { describe, expect, it } from 'vitest';
 
 import { createGetNodeMotionHandler } from '../../src/handlers/get-node-motion.js';
 
-/** A node carrying the Motion mixin — `isMotionNode` keys off `applyAnimationStyle`. */
+/** A node carrying the Motion mixin's state, as the Figma Design editor exposes it. */
 const motionNode = (id: string): BaseNode =>
-  ({
+  ({ ...readOnlyMotionNode(id), applyAnimationStyle: () => {} }) as unknown as BaseNode;
+
+/**
+ * The same node as Dev Mode exposes it (measured): its Motion state reads, but the write methods
+ * such as `applyAnimationStyle` are absent.
+ */
+function readOnlyMotionNode(id: string): BaseNode {
+  return {
     id,
-    applyAnimationStyle: () => {},
     animationStyles: [{ styleId: 'S:1', name: 'Fade in' }],
     animations: { OPACITY: { keyframes: [] } },
     manualKeyframeTracks: { TRANSLATION_X: { keyframes: [] } },
-    timelines: [{ id: 'T:1', duration: 2, extra: 'ignored' }],
-  }) as unknown as BaseNode;
+    timelines: [{ id: 'T:1', duration: 2, loopMode: 'LOOP' }],
+  } as unknown as BaseNode;
+}
 
 /** A node with no Motion mixin at all (PAGE / DOCUMENT). */
 const plainNode = (id: string): BaseNode => ({ id }) as unknown as BaseNode;
@@ -36,7 +43,8 @@ describe('get_node_motion handler', () => {
     const result = (await handler({ nodeId: '1:2' })) as GetNodeMotionResult;
     expect(result.nodeId).toBe('1:2');
     expect(result.playheadPosition).toBe(1.25);
-    expect(result.motion?.timelines).toEqual([{ id: 'T:1', duration: 2 }]);
+    // A Timeline field a later API adds (none exists yet) is carried through, not mapped away.
+    expect(result.motion?.timelines).toEqual([{ id: 'T:1', duration: 2, loopMode: 'LOOP' }]);
     expect(result.motion?.animationStyles).toEqual([{ styleId: 'S:1', name: 'Fade in' }]);
   });
 
@@ -73,6 +81,22 @@ describe('get_node_motion handler', () => {
     expect(result.motion).not.toBeNull();
   });
 
+  it('keeps a timeline id and duration even when the API object does not enumerate them', async () => {
+    class ApiTimeline {
+      get id(): string {
+        return 'T:9';
+      }
+      get duration(): number {
+        return 4;
+      }
+    }
+    const node = { ...(motionNode('1:6') as object), timelines: [new ApiTimeline()] };
+    const result = (await createGetNodeMotionHandler(
+      fakeFigma({ editorType: 'figma', node: node as unknown as BaseNode }),
+    )({ nodeId: '1:6' })) as GetNodeMotionResult;
+    expect(result.motion?.timelines).toEqual([{ id: 'T:9', duration: 4 }]);
+  });
+
   it('returns motion: null for an unknown node id', async () => {
     const handler = createGetNodeMotionHandler({
       editorType: 'figma',
@@ -86,5 +110,73 @@ describe('get_node_motion handler', () => {
   it('throws when nodeId is the wrong type', async () => {
     const handler = createGetNodeMotionHandler(fakeFigma({ editorType: 'figma' }));
     await expect(handler({ nodeId: 5 })).rejects.toThrow(/nodeId/);
+  });
+});
+
+describe('get_node_motion handler in Dev Mode', () => {
+  /** What readOnlyMotionNode() reads back as. */
+  const MOTION = {
+    animationStyles: [{ styleId: 'S:1', name: 'Fade in' }],
+    animations: { OPACITY: { keyframes: [] } },
+    manualKeyframeTracks: { TRANSLATION_X: { keyframes: [] } },
+    timelines: [{ id: 'T:1', duration: 2, loopMode: 'LOOP' }],
+  };
+
+  it.each([
+    ['a zero playhead', 0],
+    ['a positive playhead', 1.5],
+  ])('reads %s alongside the full Motion state', async (_, playheadPosition) => {
+    const handler = createGetNodeMotionHandler(
+      fakeFigma({ editorType: 'dev', playheadPosition, node: readOnlyMotionNode('1:7') }),
+    );
+    const result = (await handler({ nodeId: '1:7' })) as GetNodeMotionResult;
+    expect(result).toEqual({ nodeId: '1:7', motion: MOTION, playheadPosition });
+  });
+
+  it('omits playheadPosition when no timeline is active, keeping the Motion state', async () => {
+    const handler = createGetNodeMotionHandler(
+      fakeFigma({ editorType: 'dev', node: readOnlyMotionNode('1:8') }),
+    );
+    const result = (await handler({ nodeId: '1:8' })) as GetNodeMotionResult;
+    expect(result).toEqual({ nodeId: '1:8', motion: MOTION });
+  });
+
+  it('omits playheadPosition when the editor exposes no Motion API', async () => {
+    const figmaCtx = {
+      editorType: 'dev',
+      getNodeByIdAsync: async () => readOnlyMotionNode('1:9'),
+    } as unknown as typeof figma;
+    const result = (await createGetNodeMotionHandler(figmaCtx)({
+      nodeId: '1:9',
+    })) as GetNodeMotionResult;
+    expect('playheadPosition' in result).toBe(false);
+    expect(result.motion).not.toBeNull();
+  });
+
+  it("lets the playhead getter's own error through", async () => {
+    const figmaCtx = {
+      editorType: 'dev',
+      motion: {
+        get playheadPosition(): never {
+          throw new Error('boom from playheadPosition');
+        },
+      },
+      getNodeByIdAsync: async () => readOnlyMotionNode('1:10'),
+    } as unknown as typeof figma;
+    await expect(createGetNodeMotionHandler(figmaCtx)({ nodeId: '1:10' })).rejects.toThrow(
+      'boom from playheadPosition',
+    );
+  });
+
+  it.each([
+    ['a page', plainNode('0:1')],
+    ['the document', plainNode('0:0')],
+    ['a deleted id', null],
+  ])('still returns motion: null for %s', async (_, node) => {
+    const handler = createGetNodeMotionHandler(
+      fakeFigma({ editorType: 'dev', playheadPosition: 1, node }),
+    );
+    const result = (await handler({ nodeId: 'X:1' })) as GetNodeMotionResult;
+    expect(result).toEqual({ nodeId: 'X:1', motion: null, playheadPosition: 1 });
   });
 });

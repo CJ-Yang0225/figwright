@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { variableEasingSchema } from './motion-schemas.js';
 import type { ToolSpec } from './spec.js';
 
 export const SET_VARIABLE_VALUE_TOOL_NAME = 'set_variable_value';
@@ -30,17 +31,9 @@ const variableValue = z
         z.looseObject({ type: z.literal('VARIABLE_ALIAS'), id: z.string() }),
       ]),
     }),
-    // An EASING variable's curve. Figma refuses to edit EASING variables at all today, so this
-    // member exists to let such a call through to that explicit error rather than bounce off a
-    // schema mismatch. It must stay after the alias member: both are objects keyed by `type`, and
-    // this one accepts any string, so it would otherwise swallow aliases.
-    z.looseObject({
-      type: z.string(),
-      easingFunctionCubicBezier: z
-        .looseObject({ x1: z.number(), y1: z.number(), x2: z.number(), y2: z.number() })
-        .optional(),
-      easingFunctionSpring: z.looseObject({ bounce: z.number() }).optional(),
-    }),
+    // An EASING variable's curve, with the requirement every Motion easing input has. Its `type`
+    // enum has no VARIABLE_ALIAS, so it cannot swallow the alias member above.
+    variableEasingSchema,
   ])
   .describe(
     'boolean | number | string | { r,g,b,a } | { type:"VARIABLE_ALIAS", id } | ' +
@@ -54,9 +47,8 @@ export const setVariableValueTool: ToolSpec = {
     'match the variable resolvedType: a boolean, a number (FLOAT), a string, a color { r, g, b, a } ' +
     '(0–1), an alias { type: "VARIABLE_ALIAS", id } pointing at another variable, or a composed ' +
     'color { color, opacity } that pairs a color with a separate opacity — each half either a ' +
-    'concrete value or an alias, with at least one of the two an alias. EASING and ' +
-    'TIMING variables are read-only to plugins — Figma rejects editing them, so read them with ' +
-    'get_variable_defs and change them in the Figma UI instead. Create the variable first with ' +
+    'concrete value or an alias, with at least one of the two an alias. An EASING variable takes a ' +
+    'Motion easing, a TIMING variable a number of seconds. Create the variable first with ' +
     'create_variable. Returns { ok, variableId, name }.',
   inputSchema: z.object({
     variableId: z.string().describe('Variable id'),

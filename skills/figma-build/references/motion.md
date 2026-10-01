@@ -23,28 +23,57 @@ Read the real values from the source (the keyframe stops, the duration, the easi
    direction), a preset likely matches → **`apply_animation_style`** with `config` tuning
    `duration` (seconds) and preset props (direction, distance). Prefer a preset over hand-keyframing
    when it fits — it's what a designer would reach for.
+   - Props are in the preset's own units, as its `get_motion_styles` entry describes them.
+   - Set timing on one side: when `props.delay` / `props.duration` and `config.timelineOffset` /
+     `config.duration` are both given, the props win (measured on Position).
 2. Otherwise **`apply_manual_keyframe_track`** per animated property. Map source → Figma field:
 
    | Source                                                      | Figma `field` (`{ type:'PROPERTY', name }`)     | `value` type       |
    | ----------------------------------------------------------- | ----------------------------------------------- | ------------------ |
    | `translateX/Y`, Framer `x`/`y`                              | `TRANSLATION_X` / `TRANSLATION_Y`               | `FLOAT`            |
-   | `scale`, `scaleX/Y`                                         | `SCALE_XY` / `SCALE_X` / `SCALE_Y`              | `FLOAT`            |
-   | `rotate` (deg)                                              | `ROTATION` (**radians** — `rad = deg * π/180`)  | `FLOAT`            |
+   | `translate(x, y)` together                                  | `TRANSLATION_XY`                                | `VECTOR` `{x, y}`  |
+   | `scale`                                                     | `SCALE_XY`                                      | `VECTOR` `{x, y}`  |
+   | `scaleX/Y`                                                  | `SCALE_X` / `SCALE_Y`                           | `FLOAT`            |
+   | `rotate` (deg)                                              | `ROTATION` (**degrees, sign flipped**: below)   | `FLOAT`            |
    | `opacity`                                                   | `OPACITY`                                       | `FLOAT`            |
    | `border-radius`, `border-width`, width/height, gap, padding | `CORNER_RADIUS` / `STROKE_WEIGHT` / `WIDTH` / … | `FLOAT`            |
    | colour                                                      | an indexed `fills` item                         | `COLOR` (RGBA 0–1) |
 
    Each `track` = `{ baseValue, keyframes: [{ timelinePosition (s), value, easing? }] }`. A CSS
-   `@keyframes` `%` stop → `timelinePosition = pct/100 * duration`.
+   `@keyframes` `%` stop → `timelinePosition = pct/100 * duration`. Measured against Figma's render:
+   - **`ROTATION` is degrees, positive = counterclockwise on screen.** CSS `rotate` is
+     clockwise-positive, so `rotate(30deg)` → `ROTATION -30`.
+   - **Translation values are offsets from the layer's layout position**, as CSS `translate` is.
+   - A value of the wrong type for the field is refused by Figma (`SCALE_XY` takes a `VECTOR`).
 
 3. **`set_timeline_duration`** to match the source's total duration.
 
 ### Easing (reverse map)
 
+**A Figma keyframe's easing shapes the segment arriving at it** (measured: `HOLD` on the keyframe at
+1 s held the value from 0 to 1 s). CSS and WAAPI apply a keyframe's timing function to the segment
+leaving it, so put each source segment's easing on the keyframe at its end.
+
 - `linear` → `{ type: 'LINEAR' }`; `ease-in/out/in-out` → `EASE_IN` / `EASE_OUT` / `EASE_IN_AND_OUT`.
 - `cubic-bezier(x1,y1,x2,y2)` → `{ type: 'CUSTOM_CUBIC_BEZIER', easingFunctionCubicBezier: {x1,y1,x2,y2} }`.
-- A **spring** (Framer `type:'spring'`, GSAP elastic) → `{ type: 'CUSTOM_SPRING', easingFunctionSpring: { bounce } }`
-  (normalized 0–1), or a named preset (`GENTLE`/`QUICK`/`BOUNCY`/`SLOW`) when it's close.
+- A **spring** → `{ type: 'CUSTOM_SPRING', easingFunctionSpring: { bounce } }` (0–1), or a named
+  preset when it matches: `GENTLE` is bounce 0.25, `QUICK` ≈ 0.4226, `BOUNCY` ≈ 0.6938, `SLOW` 0.
+  From a physical spring (`mass` / `stiffness` / `damping`, e.g. Framer Motion's), Figma's own
+  conversion is `bounce = max(0, 1 − damping / (2·√(mass·stiffness)))` — exact on every input
+  measured, so only the damping ratio carries over. The curve spans the keyframe's segment, so the
+  segment length you choose sets the speed (see figma-codegen's `references/motion.md`, Springs).
+
+A custom type needs its parameters — `CUSTOM_CUBIC_BEZIER` its four points, `CUSTOM_SPRING` its
+bounce — and is refused without them.
+
+### Bind to a variable
+
+When the source takes an easing or a duration from a design token, bind it: pass
+`{ type: 'VARIABLE_ALIAS', id }` instead of the literal. A keyframe's `easing` and a preset's
+`props.easing` take an **EASING** variable; a preset's `props.delay` / `props.duration` take a
+**TIMING** variable (seconds). `config.duration` and `config.timelineOffset` take numbers only. A
+variable of the wrong type, or one that does not exist, is refused before anything changes. Create
+them with `create_variable` (`EASING` / `TIMING`, no `scopes`) and set them with `set_variable_value`.
 
 ## Stagger → one atomic `batch` (the efficiency win)
 
@@ -73,14 +102,27 @@ sequential calls.
 
 Manual keyframe tracks are also batchable (PROPERTY fields only). `set_timeline_duration` too.
 
+## Edit or retime an existing track
+
+`apply_manual_keyframe_track` replaces the whole track of its field, so rebuild the track from what
+is there: read it with `get_node_motion` (its `manualKeyframeTracks` entry), change only the
+keyframes the user named — keeping each one's `value` and `easing` — and write the whole track back.
+Moving keyframes in time gives them new ids (the track keeps its id), so match keyframes by order and
+time, not by id. A preset is not edited in place: `remove_animation_style`, then
+`apply_animation_style` again. Extending the timeline affects every layer of the frame — say so.
+
 ## Verify
 
 `export_video` the top-level frame to an MP4/GIF and check the motion reads right, or scrub the
-timeline in Figma. Then it's the same render-and-diff loop as a static build.
+timeline in Figma. Then it's the same render-and-diff loop as a static build. `design_diff` only sees
+a Motion summary (preset names, animated field names, timeline length), so compare
+`get_node_motion` or `get_motion_context` reads for keyframe-level changes.
 
 ## Limits (be honest)
 
 - **Motion is beta** and Figma-Design-only; if `apply_*` reports it's unavailable, say so — don't fake
   a static approximation and call it animated.
-- **Rotation/units**: degrees → radians; colours → RGBA 0–1.
+- **Instance sublayers can't be animated** through the plugin API. Animate the main component's
+  layer (every instance plays it) or detach the instance.
+- **Units**: rotation in degrees with the sign flipped (above); colours RGBA 0–1.
 - Author only what the source actually animates; don't invent motion the code didn't specify.
