@@ -1,5 +1,73 @@
 # Changelog
 
+## v0.6.0
+
+[compare changes](https://github.com/awdr74100/figwright/compare/v0.5.0...v0.6.0)
+
+### 🚀 Enhancements
+
+- **design,codegen:** Support the SPACE_EVENLY and SPACE_AROUND auto-layout distributions ([#193](https://github.com/awdr74100/figwright/pull/193))
+- **design,codegen:** Carry a variable font's axis values through every text read and write ([#199](https://github.com/awdr74100/figwright/pull/199))
+- **relay,tools:** Let each agent claim its own Figma file ([#210](https://github.com/awdr74100/figwright/pull/210))
+- **tools:** Let set_position join an atomic batch ([#217](https://github.com/awdr74100/figwright/pull/217))
+- **tools:** Decide every write tool's batchability, and make rollback faithful ([#218](https://github.com/awdr74100/figwright/pull/218))
+- **tools:** Let a variable collection and its modes be renamed, and a mode removed ([#238](https://github.com/awdr74100/figwright/pull/238))
+- **grounding:** Report which component property drives a layer ([#243](https://github.com/awdr74100/figwright/pull/243))
+- **tools:** Let import_image read a local file by path ([#242](https://github.com/awdr74100/figwright/pull/242))
+- **design,codegen:** Absorb composed colours and act on variable scopes ([#246](https://github.com/awdr74100/figwright/pull/246))
+- **design:** Read and edit a page's prototype flows ([#258](https://github.com/awdr74100/figwright/pull/258))
+- **design:** Read, guard and author Figma Motion end to end ([#261](https://github.com/awdr74100/figwright/pull/261))
+
+### 🩹 Fixes
+
+- **design:** Carry every prototype trigger and action field through a reaction round-trip ([#198](https://github.com/awdr74100/figwright/pull/198))
+- **relay:** Release the response bodies the follower never reads ([#202](https://github.com/awdr74100/figwright/pull/202))
+- **grounding:** Make the file cap keep a stable set, and say when it bit ([#212](https://github.com/awdr74100/figwright/pull/212))
+- **tools:** Say why a non-write op can't join a batch ([#219](https://github.com/awdr74100/figwright/pull/219))
+- **grounding:** Keep a timed-out walk fixture out of the next test's tmpdir ([#220](https://github.com/awdr74100/figwright/pull/220))
+- **relay:** Give the connect phase its own budget so a throttled handshake can land ([#228](https://github.com/awdr74100/figwright/pull/228))
+- **grounding:** Give the two cap fixtures a timeout Windows can meet ([#229](https://github.com/awdr74100/figwright/pull/229))
+- **tools:** Refuse an argument a tool never declared ([#231](https://github.com/awdr74100/figwright/pull/231))
+- **design:** Resolve variants to their set on bind ([#241](https://github.com/awdr74100/figwright/pull/241))
+- **tools:** Make import_image's own failures say what to do ([#244](https://github.com/awdr74100/figwright/pull/244))
+- **relay:** Carry the sandbox's error code instead of folding it into the message ([#245](https://github.com/awdr74100/figwright/pull/245))
+- **tools:** Read resize_nodes back instead of reporting every call as applied ([#255](https://github.com/awdr74100/figwright/pull/255))
+- **design:** Take back a flow Figma adds when a rolled-back batch connected a page ([#259](https://github.com/awdr74100/figwright/pull/259))
+- **relay:** Stop holding a claimed file's calls for a plugin run that has ended ([#260](https://github.com/awdr74100/figwright/pull/260))
+- **design:** Keep a fill the user changes while bind_variable_to_paint looks up its variable ([#262](https://github.com/awdr74100/figwright/pull/262))
+- **design:** Keep the styling of text that set_text and find_replace_text do not change ([#264](https://github.com/awdr74100/figwright/pull/264))
+- **grounding:** Read vertical wraps and drop the wrap gap Figma ignores, on plugin-typings 1.140.0 ([#265](https://github.com/awdr74100/figwright/pull/265))
+
+### 💅 Refactors
+
+- **plugin:** Lift a sort key out of the comparator it was rebuilt in ([#235](https://github.com/awdr74100/figwright/pull/235))
+
+### 📖 Documentation
+
+- **repo:** Stop stating a tool count where the number does nothing ([#211](https://github.com/awdr74100/figwright/pull/211))
+- **repo:** Name the panel's background control and say how to get it back ([#225](https://github.com/awdr74100/figwright/pull/225))
+- **repo:** Answer how to tell whether server and plugin are in sync ([#227](https://github.com/awdr74100/figwright/pull/227))
+- **repo:** Put working across files on the front page, and name its unit ([#230](https://github.com/awdr74100/figwright/pull/230))
+- **skills:** Partition the SDK dist by content hash, not by filename ([#237](https://github.com/awdr74100/figwright/pull/237))
+- **tools:** Say that a bound paint takes its opacity from the variable ([#263](https://github.com/awdr74100/figwright/pull/263))
+
+### 📦 Build
+
+- **repo:** Move the workspace to pnpm 12 ([#205](https://github.com/awdr74100/figwright/pull/205))
+- **repo:** Drop the dead dependency build allowlist ([#207](https://github.com/awdr74100/figwright/pull/207))
+
+### 🤖 CI
+
+- **repo:** Close the commit scope vocabulary and require one per title ([#190](https://github.com/awdr74100/figwright/pull/190))
+
+### ❤️ Contributors
+
+- Roya ([@awdr74100](https://github.com/awdr74100))
+- ChaoJie Yang ([@CJ-Yang0225](https://github.com/CJ-Yang0225))
+- Saminahbab <saminahbab0@gmail.com>
+- Farrizal Alchudry Mutaqien ([@riez](https://github.com/riez))
+- Congzhou09 ([@congzhou09](https://github.com/congzhou09))
+
 ## v0.5.0
 
 [compare changes](https://github.com/awdr74100/figwright/compare/v0.4.0...v0.5.0)
