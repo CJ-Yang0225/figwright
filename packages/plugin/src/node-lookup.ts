@@ -3,10 +3,10 @@ const INSTANCE_QUALIFIED = /^I([^;]+);/;
 
 /**
  * Resolve an instance-qualified id (`I2:6;2:5`) from its outermost instance down, never handing it
- * to Figma's by-id lookup. Measured live (R7): in some plugin sessions `getNodeByIdAsync` on such
- * an id waits 10 s and rejects "Unable to establish connection to Figma", while the same session
- * resolves the instance root by id and walks its subtree normally. A miss resolves to null, exactly
- * as Figma's lookup would; any other id goes to Figma unchanged.
+ * to Figma's by-id lookup. Measured live: in some plugin sessions `getNodeByIdAsync` on such an id
+ * waits 10 s and rejects "Unable to establish connection to Figma", while the same session resolves
+ * the instance root by id and walks its subtree normally. A miss resolves to null, exactly as
+ * Figma's lookup would; any other id goes to Figma unchanged.
  */
 export const resolveNodeById = async (
   figmaCtx: typeof figma,

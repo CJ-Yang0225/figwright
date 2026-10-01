@@ -187,7 +187,7 @@ export const withEasingNotice = (toolName: string, result: CallToolResult): Call
   };
 };
 
-/** Figma's own text when its by-id lookup gives up (measured, R7). */
+/** Figma's own text when its by-id lookup gives up (measured). */
 const FIGMA_LOOKUP_TIMEOUT = 'Unable to establish connection to Figma after 10 seconds';
 const LOOKUP_TIMEOUT_HEADING = '⚠️ FIGMA GAVE UP LOOKING UP AN ID';
 const LOOKUP_TIMEOUT_NOTICE =
@@ -252,7 +252,10 @@ export const withStalePresetTargetNotice = withErrorGuidance(
   STALE_PRESET_TARGET_NOTICE,
 );
 
-/** The five Motion writes (`packages/mcp/src/tools/registry.ts`'s Motion block) that trigger R8. */
+/**
+ * The five Motion writes (`packages/mcp/src/tools/registry.ts`'s Motion block) that trigger the
+ * layer-id notice.
+ */
 const MOTION_WRITE_TOOLS: ReadonlySet<string> = new Set([
   'apply_animation_style',
   'remove_animation_style',
@@ -287,14 +290,17 @@ const batchHasMotionWrite = (args: Record<string, unknown>): boolean => {
   );
 };
 
-/** Whether this call is one R8 fires on: a Motion write, `export_video`, or a batch with either. */
+/**
+ * Whether this call is one the layer-id notice fires on: a Motion write, `export_video`, or a batch
+ * with either.
+ */
 const triggersMotionWriteNotice = (toolName: string, args: Record<string, unknown>): boolean => {
   if (toolName === 'export_video' || MOTION_WRITE_TOOLS.has(toolName)) return true;
   return toolName === 'batch' && batchHasMotionWrite(args);
 };
 
 /**
- * Append the R8 layer-id notice to a successful Motion write or `export_video` result.
+ * Append the layer-id notice to a successful Motion write or `export_video` result.
  *
  * This is a blanket reminder, not a detection: nothing here compares node state before and after,
  * so it fires on every qualifying call regardless of whether that call actually changed an id — the
@@ -327,13 +333,13 @@ export const withMotionWriteNotice = (
 const BATCH_OP_FAILED = /batch: op (\d+) \([^)]*\) failed, rolled back/;
 
 /**
- * Append the R8 layer-id notice to a failed `batch` whose rollback undid Motion writes.
+ * Append the layer-id notice to a failed `batch` whose rollback undid Motion writes.
  *
  * A batch that fails at op i has already applied ops 0..i-1 and undone them, and both the apply and
  * the undo are Motion writes when those ops are — the same writes that renumber layer ids on
  * success. So the ids the agent holds may be stale even though the call failed. Only then: a
  * failure at op 0, or one during capture, wrote nothing, and a rollback of non-Motion ops is not
- * what R8 describes.
+ * what that notice describes.
  */
 export const withRolledBackMotionNotice =
   (toolName: string, args: Record<string, unknown>) =>

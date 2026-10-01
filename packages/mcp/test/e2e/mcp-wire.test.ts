@@ -577,7 +577,7 @@ describe.skipIf(!existsSync(DIST_ENTRY))('MCP wire contract (built dist)', () =>
     }
   }, 30_000);
 
-  it('attaches the R8 layer-id notice to Motion writes, a Motion batch and export_video — and only there', async () => {
+  it('attaches the layer-id notice to Motion writes, a Motion batch and export_video — and only there', async () => {
     const server = new WireClient();
     await server.start();
     await server.handshake(LATEST_CLIENT_PROTOCOL);
@@ -594,7 +594,7 @@ describe.skipIf(!existsSync(DIST_ENTRY))('MCP wire contract (built dist)', () =>
         batch: () => ({ ok: true, results: [{ ok: true, nodeId: '1:2' }] }),
         rename_node: () => ({ ok: true, nodeId: '1:2' }),
         // A fake plugin that never encoded anything — the `path: null` shape export_video reports
-        // for a static frame, Dev Mode, or FigJam. No error, so R8 still fires on it.
+        // for a static frame, Dev Mode, or FigJam. No error, so the layer-id notice still fires on it.
         export_video: () => ({ nodeId: '1:1', format: 'MP4', reason: 'static' }),
         // What the fake plugin does when a handler throws: an INTERNAL error, same as a real
         // editor-gate or alias-check rejection before any Figma mutation runs.

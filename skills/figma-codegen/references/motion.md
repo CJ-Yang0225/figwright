@@ -73,7 +73,7 @@ playback. Ask the user, or state the policy you chose as yours.
 
 ## How Figma plays it (measured)
 
-Measured against Figma's own render in the Figwright Motion Test file (2026-09-22); Motion is beta,
+Measured against Figma's own render in a dedicated Figma test file (2026-09-22); Motion is beta,
 so re-verify when output disagrees:
 
 - **Easing belongs to the arriving keyframe**: a keyframe's easing shapes the segment that ends at

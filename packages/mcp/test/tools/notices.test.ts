@@ -270,7 +270,7 @@ describe('withMotionWriteNotice', () => {
     'set_timeline_duration',
   ];
 
-  it.each(WRITE_TOOLS)('appends the R8 notice once to a successful %s result', name => {
+  it.each(WRITE_TOOLS)('appends the layer-id notice once to a successful %s result', name => {
     const out = withMotionWriteNotice(name, {}, result('{"ok":true}'));
 
     expect(out.content).toHaveLength(2);
@@ -382,7 +382,7 @@ describe('withMotionWriteNotice', () => {
 });
 
 describe('withLookupTimeoutNotice', () => {
-  // Figma's own text, verbatim as measured live in the R7 state.
+  // Figma's own text, verbatim as measured live while the by-id lookup was timing out.
   const FIGMA =
     'Unable to establish connection to Figma after 10 seconds. Please check your internet connection.';
   const HEADING = 'FIGMA GAVE UP LOOKING UP AN ID';
@@ -409,7 +409,7 @@ describe('withLookupTimeoutNotice', () => {
   });
 
   it('routes a variable or collection lookup to listing, not to retrying the id', async () => {
-    // R7 has hit variable-collection lookups for collections that existed (03 verify).
+    // The by-id timeout has also hit variable-collection lookups for collections that existed.
     const message = await messageOf(
       withLookupTimeoutNotice(failWith(new Error(`delete_variable_collection: ${FIGMA}`))),
     );

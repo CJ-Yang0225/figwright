@@ -71,7 +71,7 @@ found`). So:
    Each `track` = `{ baseValue, keyframes: [{ timelinePosition (s), value, easing? }] }`. A CSS
    `@keyframes` `%` stop → `timelinePosition = pct/100 * duration`.
 
-   Measured against Figma's own render (Figwright Motion Test, 2026-09-22) — re-check if the beta
+   Measured against Figma's own render (in a dedicated Figma test file, 2026-09-22) — re-check if the beta
    changes:
    - **Easing belongs to the arriving keyframe.** A Figma keyframe's easing shapes the segment that
      ends at it; a CSS / WAAPI keyframe's timing function shapes the segment that starts at it. Put

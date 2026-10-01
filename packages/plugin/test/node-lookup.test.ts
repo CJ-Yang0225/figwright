@@ -4,8 +4,8 @@ import { describe, expect, it } from 'vitest';
 import { createSandboxHandlers } from '../src/handlers/registry.js';
 import { withInstanceIdLookup } from '../src/node-lookup.js';
 
-// Figma's own rejection, measured live in the R7 state: a bare string, not an Error.
-const R7 =
+// Figma's own rejection, measured live while the by-id lookup was timing out: a bare string, not an Error.
+const BY_ID_TIMEOUT =
   'Unable to establish connection to Figma after 10 seconds. Please check your internet connection.';
 
 interface FakeNode {
@@ -48,9 +48,9 @@ const node = (id: string, children?: FakeNode[], visible = true): FakeNode => {
 };
 
 /**
- * The R7 state as a test double: the by-id lookup rejects every instance-qualified id with Figma's
- * bare string, and — unless `unknown: 'null'` — every id it does not know as well (`999:999` timed
- * out live too). Plain ids it knows resolve. Every call is recorded.
+ * The by-id timeout as a test double: the by-id lookup rejects every instance-qualified id with
+ * Figma's bare string, and — unless `unknown: 'null'` — every id it does not know as well
+ * (`999:999` timed out live too). Plain ids it knows resolve. Every call is recorded.
  */
 const r7Figma = (opts: { unknown: 'reject' | 'null' } = { unknown: 'reject' }) => {
   const hidden = node('I2:6;2:7', undefined, false);
@@ -69,10 +69,10 @@ const r7Figma = (opts: { unknown: 'reject' | 'null' } = { unknown: 'reject' }) =
     skipInvisibleInstanceChildren: false,
     getNodeByIdAsync: async (id: string) => {
       lookups.push(id);
-      if (id.startsWith('I')) throw R7; // eslint-disable-line no-throw-literal
+      if (id.startsWith('I')) throw BY_ID_TIMEOUT; // eslint-disable-line no-throw-literal
       const found = plain.get(id);
       if (found !== undefined) return found;
-      if (opts.unknown === 'reject') throw R7; // eslint-disable-line no-throw-literal
+      if (opts.unknown === 'reject') throw BY_ID_TIMEOUT; // eslint-disable-line no-throw-literal
       return null;
     },
   } as unknown as typeof figma;
@@ -130,8 +130,8 @@ describe('instance-qualified ids resolve from the instance root, never through F
   it('a missing instance root fails exactly as a plain unknown id does when Figma rejects it', async () => {
     const { figmaCtx, lookups } = r7Figma();
     const handlers = createSandboxHandlers(figmaCtx);
-    await expect(handlers.get_node_motion!({ nodeId: 'I7:7;2:5' })).rejects.toBe(R7);
-    await expect(handlers.get_node_motion!({ nodeId: '7:7' })).rejects.toBe(R7);
+    await expect(handlers.get_node_motion!({ nodeId: 'I7:7;2:5' })).rejects.toBe(BY_ID_TIMEOUT);
+    await expect(handlers.get_node_motion!({ nodeId: '7:7' })).rejects.toBe(BY_ID_TIMEOUT);
     expect(lookups).toEqual(['7:7', '7:7']);
   });
 
