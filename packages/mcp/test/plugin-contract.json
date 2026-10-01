@@ -22,7 +22,6 @@
     "get_motion_styles": [],
     "get_node_motion": ["nodeId"],
     "get_motion_context": ["nodeId"],
-    "normalize_motion_spring": ["damping", "mass", "stiffness"],
     "list_files": [],
     "get_design_context": ["budget", "dedupeComponents", "depth", "detail", "nodeId"],
     "get_screenshot": ["binary", "forVision", "format", "nodeIds", "scale"],

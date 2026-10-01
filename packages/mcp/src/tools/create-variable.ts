@@ -43,11 +43,9 @@ export const createVariableTool: ToolSpec = {
   description:
     'Create a variable in a collection with resolvedType BOOLEAN / FLOAT / STRING / COLOR / EASING ' +
     '/ TIMING. Set per-mode values with set_variable_value, then attach it with ' +
-    'bind_variable_to_node or bind_variable_to_paint. EASING (a Motion easing curve; starts as ' +
-    'CUSTOM_CUBIC_BEZIER (0.5, 0, 0.5, 1)) and TIMING (a duration in seconds; starts at 0) drive ' +
-    'Figma Motion: bind them as { type: "VARIABLE_ALIAS", id } — an EASING variable in a keyframe ' +
-    "easing or a preset's props.easing, a TIMING variable in props.delay / props.duration of " +
-    'apply_animation_style. Optionally pass ' +
+    'bind_variable_to_node or bind_variable_to_paint — or, for EASING (a Motion curve) and TIMING ' +
+    '(seconds), as a { type: "VARIABLE_ALIAS", id } in a Motion easing or a preset\'s delay / ' +
+    'duration. Optionally pass ' +
     'scopes to narrow where Figma offers the variable in its picker (a radius token scoped to ' +
     'CORNER_RADIUS stops being suggested for width or gap); omit it to leave the variable in every ' +
     "scope, which is Figma's default. Returns { ok, variableId, name }.",

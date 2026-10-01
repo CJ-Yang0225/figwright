@@ -119,8 +119,8 @@ describe('animationStyleConfigSchema', () => {
 });
 
 describe('custom easing without its parameters', () => {
-  // Figma accepts both and reads back a value it does not play (spring: reads 0.25, plays linear;
-  // bezier: reads (0,0,0.58,1), plays roughly (0.5,0,0.5,1)), so the input is refused instead.
+  // A custom curve is only defined by its parameters; Figma accepts the bare type and fills in values
+  // of its own, so the schema requires them.
   const kf = (easing: unknown): unknown => ({
     timelinePosition: 1,
     value: { type: 'FLOAT', value: 1 },
@@ -137,16 +137,20 @@ describe('custom easing without its parameters', () => {
     config: { props: { easing } },
   });
   const cases = [
-    { type: 'CUSTOM_SPRING', param: 'easingFunctionSpring', text: /bounce 0\.25.*LINEAR/ },
+    {
+      type: 'CUSTOM_SPRING',
+      param: 'easingFunctionSpring',
+      text: /CUSTOM_SPRING needs easingFunctionSpring: \{ bounce \}/,
+    },
     {
       type: 'CUSTOM_CUBIC_BEZIER',
       param: 'easingFunctionCubicBezier',
-      text: /\(0, 0, 0\.58, 1\).*\(0\.5, 0, 0\.5, 1\)/,
+      text: /CUSTOM_CUBIC_BEZIER needs easingFunctionCubicBezier: \{ x1, y1, x2, y2 \}/,
     },
   ] as const;
 
   for (const { type, param, text } of cases) {
-    it(`refuses ${type} with the reason and the remedy, in a keyframe and in preset props`, () => {
+    it(`refuses ${type} and names the missing parameter, in a keyframe and in preset props`, () => {
       for (const parsed of [
         motionEasingSchema.safeParse({ type }),
         manualKeyframeTrackInputSchema.safeParse({ keyframes: [kf({ type })] }),
@@ -156,8 +160,6 @@ describe('custom easing without its parameters', () => {
         const issue = parsed.error?.issues[0];
         expect(issue?.path.at(-1)).toBe(param);
         expect(issue?.message).toMatch(text);
-        expect(issue?.message).toMatch(/explicitly/);
-        expect(issue?.message).toMatch(/LINEAR/);
       }
     });
 
@@ -263,8 +265,8 @@ describe('create_variable', () => {
 });
 
 describe('set_variable_value with an EASING value', () => {
-  // The EASING member was opened with create_variable, so it is one more input that takes a Motion
-  // easing — and it must refuse a custom curve without its parameters exactly as the others do.
+  // One more input that takes a Motion easing, so it requires a custom curve's parameters exactly as
+  // the others do.
   const args = (value: unknown): unknown => ({ variableId: 'VariableID:1', modeId: '1:0', value });
 
   for (const [type, param] of [
@@ -273,9 +275,13 @@ describe('set_variable_value with an EASING value', () => {
   ] as const) {
     it(`refuses ${type} without ${param}, directly, in a batch op and at /rpc`, () => {
       const parsed = setVariableValueTool.inputSchema.safeParse(args({ type }));
-      expect(parsed.success).toBe(false);
-      expect(JSON.stringify(parsed.error?.issues)).toContain(param);
-      expect(JSON.stringify(parsed.error?.issues)).toContain('explicitly');
+      // The refinement's issue alone, not buried in the union's "Invalid input".
+      expect(parsed.error?.issues).toEqual([
+        expect.objectContaining({
+          path: ['value', param],
+          message: expect.stringContaining(`${type} needs ${param}`),
+        }),
+      ]);
       expect(checkWireCall('set_variable_value', args({ type }))?.code).toBe(
         ErrorCode.InvalidParams,
       );

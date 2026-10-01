@@ -10,9 +10,8 @@ import { z } from 'zod';
 //
 // Idiom, matching the rest of the repo: keep these schemas simple (enum + describe + basic bounds)
 // and defer cross-field semantics (e.g. "an effects field needs `field` or `propertyId`") to the
-// hand-written type-guards in the plugin handlers. The one exception is motionEasingSchema's
-// refinement below, which has to hold at every entry point (direct call, batch op, the leader's
-// /rpc) — and all three validate against this schema, while no plugin handler sees all three.
+// hand-written type-guards in the plugin handlers. The one refinement is the custom-easing
+// requirement below, which has to hold at every entry point, and only the schema sees them all.
 
 const rgba = z
   .object({
@@ -43,93 +42,58 @@ export const MOTION_EASING_TYPES = [
   'HOLD',
 ] as const;
 
-// A custom easing written without its parameters is accepted by Figma, which then reads back a
-// value it does not play (measured live, segments 01 and 05): the record looks complete and is
-// wrong, and writing it back changes the animation. Refused here rather than defaulted, so the
-// agent picks the curve instead of us. A refinement adds no keyword to the advertised JSON Schema.
-type EasingParam = 'easingFunctionSpring' | 'easingFunctionCubicBezier';
-type MissingParams = Record<
-  'CUSTOM_SPRING' | 'CUSTOM_CUBIC_BEZIER',
-  { path: EasingParam; message: string }
->;
+// A custom curve is only defined by its parameters, and Figma accepts the bare type and fills in
+// values of its own, so each custom type requires its own. A refinement rather than a discriminated
+// union: a missing required field aborts a union member, and a union whose members all abort
+// reports a bare "Invalid input", while a refinement's issue is the one non-aborted result and
+// reaches the agent verbatim — in a keyframe, a preset prop, an EASING variable's value, a batch op
+// and at the leader's /rpc alike.
+const CUSTOM_EASING_PARAMS = {
+  CUSTOM_CUBIC_BEZIER: ['easingFunctionCubicBezier', '{ x1, y1, x2, y2 }'],
+  CUSTOM_SPRING: ['easingFunctionSpring', '{ bounce } (0–1)'],
+} as const;
 
-const MISSING_EASING_PARAMS: MissingParams = {
-  CUSTOM_SPRING: {
-    path: 'easingFunctionSpring',
-    message:
-      'CUSTOM_SPRING needs easingFunctionSpring: { bounce } (0–1). Written without it, Figma ' +
-      'stores and reads back bounce 0.25 but plays the segment LINEAR (measured), and writing that ' +
-      'read-back record again turns it into a real 0.25 spring. Pass the bounce explicitly; for a ' +
-      "straight line use type LINEAR; for Figma's default spring pass { bounce: 0.25 } (renders " +
-      'like GENTLE).',
-  },
-  CUSTOM_CUBIC_BEZIER: {
-    path: 'easingFunctionCubicBezier',
-    message:
-      'CUSTOM_CUBIC_BEZIER needs easingFunctionCubicBezier: { x1, y1, x2, y2 }. Written without ' +
-      'it, Figma reads back (0, 0, 0.58, 1) but plays roughly (0.5, 0, 0.5, 1) (measured). Pass ' +
-      'the four control points explicitly; for a straight line use type LINEAR; for the curve ' +
-      'Figma reads back pass { x1: 0, y1: 0, x2: 0.58, y2: 1 }.',
-  },
+const requireCustomEasingParams = (
+  easing: { type: string; easingFunctionCubicBezier?: unknown; easingFunctionSpring?: unknown },
+  ctx: z.RefinementCtx,
+): void => {
+  if (easing.type !== 'CUSTOM_CUBIC_BEZIER' && easing.type !== 'CUSTOM_SPRING') return;
+  const [param, shape] = CUSTOM_EASING_PARAMS[easing.type];
+  if (easing[param] === undefined) {
+    ctx.addIssue({
+      code: 'custom',
+      path: [param],
+      message: `${easing.type} needs ${param}: ${shape}`,
+    });
+  }
 };
 
-// The same refusal for an EASING variable's value (set_variable_value). What a variable holding
-// such a curve plays has not been measured, only that it reads back Figma's defaults, so these say
-// no more than that.
-export const MISSING_VARIABLE_EASING_PARAMS: MissingParams = {
-  CUSTOM_SPRING: {
-    path: 'easingFunctionSpring',
-    message:
-      'An EASING value of CUSTOM_SPRING needs easingFunctionSpring: { bounce } (0–1). Without it ' +
-      'Figma stores bounce 0.25 (measured), the same record a keyframe spring written without a ' +
-      'bounce reads back — and that keyframe plays LINEAR, so which curve plays is not known. Pass ' +
-      "the bounce explicitly; for Figma's default spring pass { bounce: 0.25 }.",
-  },
-  CUSTOM_CUBIC_BEZIER: {
-    path: 'easingFunctionCubicBezier',
-    message:
-      'An EASING value of CUSTOM_CUBIC_BEZIER needs easingFunctionCubicBezier: { x1, y1, x2, y2 }. ' +
-      'Without it Figma fills in points of its own, and a keyframe written that way plays other ' +
-      'than it reads back (measured). Pass the four control points explicitly.',
-  },
+const easingParams = {
+  easingFunctionCubicBezier: z
+    .object({ x1: z.number(), y1: z.number(), x2: z.number(), y2: z.number() })
+    .describe('Bezier control points; required for type "CUSTOM_CUBIC_BEZIER"')
+    .optional(),
+  easingFunctionSpring: z
+    .object({ bounce: z.number().min(0).max(1) })
+    .describe('Normalized bounce 0–1; required for type "CUSTOM_SPRING"')
+    .optional(),
 };
-
-/**
- * Refuse a CUSTOM_SPRING / CUSTOM_CUBIC_BEZIER that lacks its parameters. One rule for every input
- * that takes a Motion easing — a keyframe, a preset prop, an EASING variable's value — so none of
- * them lets through a curve Figma would fill in and then play differently.
- */
-export const refuseMissingEasingParams =
-  (messages: MissingParams = MISSING_EASING_PARAMS) =>
-  (
-    easing: { type: string; easingFunctionSpring?: unknown; easingFunctionCubicBezier?: unknown },
-    ctx: z.RefinementCtx,
-  ): void => {
-    const missing =
-      easing.type === 'CUSTOM_SPRING' || easing.type === 'CUSTOM_CUBIC_BEZIER'
-        ? messages[easing.type]
-        : undefined;
-    if (missing !== undefined && easing[missing.path] === undefined) {
-      ctx.addIssue({ code: 'custom', path: [missing.path], message: missing.message });
-    }
-  };
 
 export const motionEasingSchema = z
-  .object({
-    type: z.enum(MOTION_EASING_TYPES),
-    easingFunctionCubicBezier: z
-      .object({ x1: z.number(), y1: z.number(), x2: z.number(), y2: z.number() })
-      .describe('Bezier control points; only for type "CUSTOM_CUBIC_BEZIER"')
-      .optional(),
-    easingFunctionSpring: z
-      .object({ bounce: z.number().min(0).max(1) })
-      .describe('Normalized bounce 0–1; only for type "CUSTOM_SPRING"')
-      .optional(),
-  })
-  .superRefine(refuseMissingEasingParams())
+  .object({ type: z.enum(MOTION_EASING_TYPES), ...easingParams })
+  .superRefine(requireCustomEasingParams)
   .describe(
-    'Motion easing: a named preset, or CUSTOM_CUBIC_BEZIER / CUSTOM_SPRING with its params',
+    'Motion easing: a named preset, or CUSTOM_CUBIC_BEZIER / CUSTOM_SPRING with its parameters',
   );
+
+/**
+ * An EASING variable's value for set_variable_value: the same easing with the same requirement, but
+ * loose, as that tool's other object members are, so whatever else Figma's value carries goes
+ * through.
+ */
+export const variableEasingSchema = z
+  .looseObject({ type: z.enum(MOTION_EASING_TYPES), ...easingParams })
+  .superRefine(requireCustomEasingParams);
 
 // KeyframeValue — discriminated on `type`. FLOAT/BOOL/TEXT_DATA cover most property animations;
 // COLOR / VECTOR / the geometric point types cover paint stops and vector fields.
@@ -161,11 +125,9 @@ export const keyframeValueSchema = z
     'A keyframe value tagged by its animated field type (FLOAT for translate/scale/opacity, …)',
   );
 
-// A Motion slot bound to a variable. Tried before the easing member for clarity, though the strict
-// easing enum cannot take 'VARIABLE_ALIAS' anyway; a missing-params easing still fails only in the
-// easing member (the alias member aborts on its `type`), so Zod passes that member's issue through
-// unwrapped and the refusal above reaches the agent verbatim. Which variable type each slot needs
-// is checked in the sandbox, the only side that can see it.
+// A Motion slot bound to a variable. The easing union's `type` has no 'VARIABLE_ALIAS', so the two
+// members never overlap. Which variable type each slot needs is checked in the sandbox, the only
+// side that can see it.
 const motionAliasSchema = SerializedVariableAliasSchema.describe(
   'Bind to a variable: an EASING variable for an easing, a TIMING variable (seconds) for a ' +
     'delay / duration prop',

@@ -49,10 +49,7 @@ export const designDiffTool: ToolSpec = {
     'as the new baseline (re-snapshot). nodeId defaults to the selection; rootDir defaults to the ' +
     'server cwd. The baseline is a plain file the tool writes under the project — committing it (so ' +
     'teammates share the baseline) or gitignoring it is your call; the tool never changes git. It ' +
-    'never mutates Figma. Scope by a component / section nodeId, the same unit codegen works on. ' +
-    'Motion is compared only as its summary (preset names, animated field names, timeline length) ' +
-    '— keyframe times, values and easing, preset config and props, and deduped instance children ' +
-    'go unseen — so it cannot verify a Motion change; compare get_motion_context reads instead.',
+    'never mutates Figma. Scope by a component / section nodeId, the same unit codegen works on.',
   inputSchema,
   kind: 'local',
   // No sandbox handler of its own; its plugin arguments are recorded under the tool it reuses.

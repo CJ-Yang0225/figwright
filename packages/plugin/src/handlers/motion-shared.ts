@@ -1,6 +1,6 @@
 // Shared helpers for the Motion (beta) handlers: the node-capability guard, the editor gate, a
 // light keyframe-field check, and the raw read get_node_motion and get_motion_context share (a
-// plain-JSON extractor plus the keyframe and unknown-field checks). The Motion API lives on every
+// plain-JSON extractor plus the keyframe check). The Motion API lives on every
 // SceneNode. Authoring is gated to the Figma Design editor; reads go wherever `figma.motion` is
 // present, except FigJam, which is never asked.
 
@@ -11,6 +11,12 @@ export type MotionNode = BaseNode & MotionNodeMixin;
 
 /** Runtime guard: the Motion mixin methods are present on scene nodes, absent on PAGE / DOCUMENT. */
 export const isMotionNode = (node: BaseNode): node is MotionNode => 'applyAnimationStyle' in node;
+
+/**
+ * Runtime guard for a read: the node carries Motion state. Keyed on the state, not on a write
+ * method like {@link isMotionNode}, because a read-only editor may expose one without the other.
+ */
+export const hasMotionState = (node: BaseNode): node is MotionNode => 'animations' in node;
 
 /**
  * Motion authoring and video export only work in the Figma Design editor. Throw a clear, actionable
@@ -110,29 +116,21 @@ const aliasSites = (input: { track?: unknown; config?: unknown }): AliasSite[] =
   return sites;
 };
 
-// What Figma does with each wrong binding it accepts, measured 2026-09-27 (Plugin API Update 133).
-const PLAYS_INSTEAD = {
-  EASING: 'play the segment LINEAR',
-  TIMING: 'not apply it (a delay bound to a FLOAT left timelineOffset at 0)',
-} as const;
-
 const REMEDY = {
   EASING:
-    'Bind an EASING variable: create one with create_variable (resolvedType EASING) and set its ' +
-    'curve with set_variable_value, or use a local or already-imported EASING variable id from ' +
-    'get_variable_defs. Or pass a literal easing instead of an alias.',
+    'Bind an EASING variable (create one with create_variable, resolvedType EASING, and set its ' +
+    'curve with set_variable_value), or pass a literal easing.',
   TIMING:
-    'Bind a TIMING variable (its value is in seconds): create one with create_variable ' +
-    '(resolvedType TIMING) and set it with set_variable_value, or use a local or already-imported ' +
-    'TIMING variable id from get_variable_defs. Or pass a literal number of seconds.',
+    'Bind a TIMING variable (create one with create_variable, resolvedType TIMING, and set its ' +
+    'seconds with set_variable_value), or pass a literal number of seconds.',
 } as const;
 
 /**
- * Refuse a Motion variable binding Figma would accept and then not play as written: an easing bound
- * to anything but an EASING variable plays LINEAR, a delay bound to a FLOAT is ignored, and a
- * binding to a missing variable is kept as-is. Every one reads back as the alias it was given, so
- * nothing downstream could notice. Checked here because only the sandbox can see a variable's type;
- * callers run it before any mutation, direct and in batch capture alike.
+ * Refuse a Motion variable binding whose variable is missing or of the wrong type for its slot — an
+ * easing bound to anything but an EASING variable, a delay or duration to anything but a TIMING
+ * one. Figma accepts both and reads them back as the alias given, so nothing downstream would
+ * notice. Checked here because only the sandbox can see a variable's type; callers run it before
+ * any mutation, direct and in batch capture alike.
  */
 export const assertMotionAliases = async (
   figmaCtx: typeof figma,
@@ -151,17 +149,15 @@ export const assertMotionAliases = async (
       throw new Error(
         `${tool}: ${path} is bound to variable ${String(id)}, which does not exist in this file. ` +
           (needs === undefined
-            ? 'Figma would keep a binding that resolves to nothing. Use a local or ' +
-              'already-imported variable id from get_variable_defs, or create one with ' +
-              'create_variable.'
-            : `Figma would accept it and ${PLAYS_INSTEAD[needs]}. ${REMEDY[needs]}`),
+            ? 'Use a local or already-imported variable id from get_variable_defs.'
+            : REMEDY[needs]),
       );
     }
     if (needs !== undefined && variable.resolvedType !== needs) {
       throw new Error(
         `${tool}: ${path} is bound to "${variable.name}" (${variable.id}), a ` +
-          `${variable.resolvedType} variable, but this slot takes ${needs === 'EASING' ? 'an' : 'a'} ${needs} variable — Figma ` +
-          `would accept it and ${PLAYS_INSTEAD[needs]}. ${REMEDY[needs]}`,
+          `${variable.resolvedType} variable, but this slot takes ${needs === 'EASING' ? 'an' : 'a'} ` +
+          `${needs} variable. ${REMEDY[needs]}`,
       );
     }
   }
@@ -198,94 +194,4 @@ export const hasKeyframe = (value: unknown): boolean => {
   const keyframes = (value as { keyframes?: unknown }).keyframes;
   if (Array.isArray(keyframes) && keyframes.length > 0) return true;
   return Object.values(value).some(hasKeyframe);
-};
-
-// Checked as complete records, so a typings bump that adds or drops a field fails typecheck here
-// instead of the new field silently reading as known (or a removed one as unknown).
-const PROPERTY_FIELDS = new Set(
-  Object.keys({
-    CORNER_RADIUS: true,
-    STROKE_WEIGHT: true,
-    STACK_SPACING: true,
-    STACK_PADDING_LEFT: true,
-    STACK_PADDING_TOP: true,
-    STACK_PADDING_RIGHT: true,
-    STACK_PADDING_BOTTOM: true,
-    WIDTH: true,
-    HEIGHT: true,
-    RECTANGLE_TOP_LEFT_CORNER_RADIUS: true,
-    RECTANGLE_TOP_RIGHT_CORNER_RADIUS: true,
-    RECTANGLE_BOTTOM_LEFT_CORNER_RADIUS: true,
-    RECTANGLE_BOTTOM_RIGHT_CORNER_RADIUS: true,
-    BORDER_TOP_WEIGHT: true,
-    BORDER_BOTTOM_WEIGHT: true,
-    BORDER_LEFT_WEIGHT: true,
-    BORDER_RIGHT_WEIGHT: true,
-    STACK_COUNTER_SPACING: true,
-    OPACITY: true,
-    GRID_ROW_GAP: true,
-    GRID_COLUMN_GAP: true,
-    TRANSLATION_X: true,
-    TRANSLATION_Y: true,
-    TRANSLATION_XY: true,
-    ROTATION: true,
-    SCALE_X: true,
-    SCALE_Y: true,
-    SCALE_XY: true,
-    PATH_TRIM_START: true,
-    PATH_TRIM_END: true,
-  } satisfies Record<KeyframePropertyFieldName, true>),
-);
-const EFFECT_FIELDS = new Set(
-  Object.keys({
-    OFFSET_X: true,
-    OFFSET_Y: true,
-    RADIUS: true,
-    SPREAD: true,
-    COLOR: true,
-    REFRACTION_RADIUS: true,
-    SPECULAR_ANGLE: true,
-    SPECULAR_INTENSITY: true,
-    CHROMATIC_ABERRATION: true,
-    SPLAY: true,
-    REFRACTION_INTENSITY: true,
-    START_RADIUS: true,
-    NOISE_SIZE_X: true,
-    NOISE_SIZE_Y: true,
-    DENSITY: true,
-    EFFECT_OPACITY: true,
-    SECONDARY_COLOR: true,
-  } satisfies Record<EffectKeyframeFieldName, true>),
-);
-const INDEXED_COLLECTIONS = new Set(['fills', 'strokes', 'effects']);
-
-/**
- * Paths of animated fields the plugin typings this build compiled against don't define — Figma
- * adding a field to the beta, most likely. Their raw data is kept like any other; this only lets
- * the caller tell a known field from one whose units and composition nobody here has checked.
- */
-export const unknownMotionFields = (motion: NodeMotion): string[] => {
-  const out: string[] = [];
-  for (const [source, fields] of [
-    ['animations', motion.animations],
-    ['manualKeyframeTracks', motion.manualKeyframeTracks],
-  ] as const) {
-    for (const [name, value] of Object.entries(fields)) {
-      if (PROPERTY_FIELDS.has(name)) continue;
-      if (!INDEXED_COLLECTIONS.has(name)) {
-        out.push(`${source}.${name}`);
-        continue;
-      }
-      if (name !== 'effects' || typeof value !== 'object' || value === null) continue;
-      for (const [index, effect] of Object.entries(value)) {
-        if (typeof effect !== 'object' || effect === null) continue;
-        for (const field of Object.keys(effect)) {
-          if (field !== 'properties' && !EFFECT_FIELDS.has(field)) {
-            out.push(`${source}.effects.${index}.${field}`);
-          }
-        }
-      }
-    }
-  }
-  return out;
 };

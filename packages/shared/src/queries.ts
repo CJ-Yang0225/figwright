@@ -421,10 +421,6 @@ export type MotionStyle = z.infer<typeof MotionStyleSchema>;
 export const GetMotionStylesResultSchema = z.object({ styles: z.array(MotionStyleSchema) });
 export type GetMotionStylesResult = z.infer<typeof GetMotionStylesResultSchema>;
 
-// ── normalize_motion_spring: physical spring → Motion's normalized bounce ────
-export const NormalizeMotionSpringResultSchema = z.object({ bounce: z.number() });
-export type NormalizeMotionSpringResult = z.infer<typeof NormalizeMotionSpringResultSchema>;
-
 // Loose: a field Figma adds to Timeline later (a loop mode, say) is carried through, not stripped.
 export const TimelineSchema = z.looseObject({ id: z.string(), duration: z.number() });
 export type Timeline = z.infer<typeof TimelineSchema>;
@@ -470,7 +466,7 @@ export type MotionContextNode = z.infer<typeof MotionContextNodeSchema>;
 
 export const MotionDiagnosticSchema = z.object({
   nodeId: z.string(),
-  code: z.enum(['read-error', 'node-over-budget', 'unknown-field']),
+  code: z.enum(['read-error', 'node-over-budget']),
   message: z.string(),
 });
 export type MotionDiagnostic = z.infer<typeof MotionDiagnosticSchema>;

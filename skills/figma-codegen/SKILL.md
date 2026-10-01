@@ -186,8 +186,9 @@ Call `get_motion_context` once on every root you implement: it inventories every
 the subtree (instance children included) and says what it could not read. Only `coverage.status:
 "complete"` with no nodes means nothing animates — the `motion` summary in `get_design_context` is a
 hint that dedupe and budget can drop. Implement what it returns with the project's own animation
-mechanism, treat anything the raw record doesn't state (easing curves, how tracks combine, loop,
-trigger) as your assumption and say so, and verify the result against the source. Dropping a frame's
+mechanism, read it with the measured rules in the reference, treat anything neither states (how
+tracks combine, loop, trigger) as your assumption and say so, and verify the result against the
+source. Dropping a frame's
 animation is a fidelity miss, the same class as dropping a shadow.
 → [`references/motion.md`](./references/motion.md).
 

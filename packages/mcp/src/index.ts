@@ -38,16 +38,7 @@ import {
   resolveImagePath,
 } from './tools/import-image.js';
 import { handleListFiles, LIST_FILES_TOOL_NAME } from './tools/list-files.js';
-import {
-  captureNotices,
-  withEasingNotice,
-  withLookupTimeoutNotice,
-  withRolledBackMotionNotice,
-  withStalePresetTargetNotice,
-  withMotionWriteNotice,
-  withRoutingNotice,
-  withSkewNotice,
-} from './tools/notices.js';
+import { captureNotices, withRoutingNotice, withSkewNotice } from './tools/notices.js';
 import { formatPingResult, handlePing, pingTool } from './tools/ping.js';
 import { ALL_TOOL_SPECS } from './tools/registry.js';
 import { handleSaveImageFills, SAVE_IMAGE_FILLS_TOOL_NAME } from './tools/save-image-fills.js';
@@ -240,24 +231,9 @@ const createMcpServer = (): McpServer => {
     // success to the user.
     const handler: ToolHandler = async args =>
       captureNotices(
-        async () =>
-          withRolledBackMotionNotice(
-            spec.name,
-            args,
-          )(async () =>
-            withStalePresetTargetNotice(async () =>
-              withLookupTimeoutNotice(async () => run(normalizeIdArgs(args))),
-            ),
-          ),
+        () => run(normalizeIdArgs(args)),
         (result, notices) =>
-          withMotionWriteNotice(
-            spec.name,
-            args,
-            withEasingNotice(
-              spec.name,
-              withSkewNotice(withRoutingNotice(result, notices.routing), notices.skew),
-            ),
-          ),
+          withSkewNotice(withRoutingNotice(result, notices.routing), notices.skew),
       );
     // The spec's own Zod object goes straight through: it is already the Standard Schema object the
     // SDK wants. Registering heterogeneous specs through one loop needed a handler cast under v1;

@@ -9,18 +9,12 @@ import {
 } from '@figwright/shared';
 
 import type { SandboxToolHandler } from '../dispatcher.js';
-import {
-  hasKeyframe,
-  isMotionNode,
-  type MotionNode,
-  readNodeMotion,
-  unknownMotionFields,
-} from './motion-shared.js';
+import { hasKeyframe, hasMotionState, type MotionNode, readNodeMotion } from './motion-shared.js';
 
-// ponytail: unmeasured starting points, not tuned values. The visit cap mirrors
-// DESIGN_CONTEXT_BAIL_NODES, so any tree get_design_context grounds whole is inventoried whole too;
-// re-measure both on a real Motion file (read time per node, largest single-node payload).
-const MAX_VISITED_NODES = 1500;
+// Visiting a node costs ~0.05 ms (measured: 1,500 nodes in ~70 ms), while a "partial" result costs
+// the caller another whole tool round trip per pending root, so the walk is capped by time, not by
+// get_design_context's node count: 10,000 nodes keeps one call to about half a second.
+export const MAX_VISITED_NODES = 10_000;
 const MAX_DIAGNOSTICS = 20;
 const MAX_MESSAGE_CHARS = 300;
 // The client's budget, split: diagnostics are charged in estimated tokens (a CJK error message
@@ -40,6 +34,48 @@ type Reason = NonNullable<MotionCoverage['reasons']>[number];
 
 const childrenOf = (node: SceneNode): readonly SceneNode[] =>
   'children' in node ? (node as SceneNode & { children: readonly SceneNode[] }).children : [];
+
+/** A track as Figma returns it: an object with an `id` and a `keyframes` array. */
+const isTrack = (value: unknown): value is { id: unknown; keyframes: unknown[] } =>
+  typeof value === 'object' &&
+  value !== null &&
+  'id' in value &&
+  Array.isArray((value as { keyframes?: unknown }).keyframes);
+
+const trackIds = (value: unknown, out: Set<unknown>): Set<unknown> => {
+  if (isTrack(value)) out.add(value.id);
+  else if (typeof value === 'object' && value !== null) {
+    for (const child of Object.values(value)) trackIds(child, out);
+  }
+  return out;
+};
+
+/** `value` without the tracks `drop` matches, and without containers that leaves empty. */
+const withoutTracks = (value: unknown, drop: (track: { id: unknown }) => boolean): unknown => {
+  if (isTrack(value)) return drop(value) ? undefined : value;
+  if (typeof value !== 'object' || value === null) return value;
+  const kept = Object.entries(value)
+    .map(([key, child]) => [key, withoutTracks(child, drop)] as const)
+    .filter(([, child]) => child !== undefined);
+  return kept.length > 0 ? Object.fromEntries(kept) : undefined;
+};
+
+/**
+ * The node's Motion with each manual track that `animations` already carries left out of
+ * `manualKeyframeTracks`. Every manual track also plays from `animations` under the same id, so the
+ * copy adds only what does not play — its authored baseValue, which Figma does not play (measured:
+ * the first keyframe's value held before it) — or a variable-bound easing, which `animations` holds
+ * resolved; a track carrying an alias is kept. Measured at 22% of a manual-track frame's payload.
+ * get_node_motion still returns every track, for editing.
+ */
+const withoutPlayedManualTracks = (motion: NodeMotion): NodeMotion => {
+  const played = trackIds(motion.animations, new Set());
+  const manual = withoutTracks(
+    motion.manualKeyframeTracks,
+    track => played.has(track.id) && !JSON.stringify(track).includes('"VARIABLE_ALIAS"'),
+  );
+  return { ...motion, manualKeyframeTracks: (manual ?? {}) as Record<string, unknown> };
+};
 
 /** The walk itself. Synchronous by design: nothing else runs while it holds the flag lifted. */
 const inventory = (root: MotionNode): GetMotionContextResult => {
@@ -75,7 +111,7 @@ const inventory = (root: MotionNode): GetMotionContextResult => {
 
     let motion: NodeMotion | null = null;
     try {
-      if (isMotionNode(node)) motion = readNodeMotion(node);
+      if (hasMotionState(node)) motion = readNodeMotion(node);
     } catch (err) {
       // The root failing means the API itself is unusable here; say so instead of a hollow result.
       if (node === root) throw err;
@@ -84,47 +120,35 @@ const inventory = (root: MotionNode): GetMotionContextResult => {
       diagnose({ nodeId: node.id, code: 'read-error', message });
     }
 
-    if (motion !== null) {
-      const unknown = unknownMotionFields(motion);
-      if (motion.animationStyles.length > 0 || hasKeyframe(motion) || unknown.length > 0) {
-        const entry: MotionContextNode = {
+    if (motion !== null && (motion.animationStyles.length > 0 || hasKeyframe(motion))) {
+      const entry: MotionContextNode = {
+        nodeId: node.id,
+        parentId: node.parent?.id ?? null,
+        name: node.name,
+        type: node.type,
+        motion: withoutPlayedManualTracks(motion),
+      };
+      const cost = estimateResultTokens(JSON.stringify(entry)) + 1;
+      if (spent + cost > NODE_TOKEN_BUDGET && nodes.length > 0) {
+        // It may fit in a call of its own: hand it back, subtree and all, before its children are
+        // queued.
+        reasons.add('payload-limit');
+        stack.push(node);
+        break;
+      }
+      if (spent + cost > NODE_TOKEN_BUDGET) {
+        // Too large even alone — a retry could never return it, so it is not pending.
+        reasons.add('payload-limit');
+        diagnose({
           nodeId: node.id,
-          parentId: node.parent?.id ?? null,
-          name: node.name,
-          type: node.type,
-          motion,
-        };
-        const cost = estimateResultTokens(JSON.stringify(entry)) + 1;
-        if (spent + cost > NODE_TOKEN_BUDGET && nodes.length > 0) {
-          // It may fit in a call of its own: hand it back, subtree and all, before its children
-          // are queued.
-          reasons.add('payload-limit');
-          stack.push(node);
-          break;
-        }
-        if (spent + cost > NODE_TOKEN_BUDGET) {
-          // Too large even alone — a retry could never return it, so it is not pending.
-          reasons.add('payload-limit');
-          diagnose({
-            nodeId: node.id,
-            code: 'node-over-budget',
-            message:
-              `This node's Motion alone is ~${cost} estimated tokens, over one call's budget. ` +
-              "get_node_motion returns it unbounded, which may exceed your client's output cap.",
-          });
-        } else {
-          spent += cost;
-          nodes.push(entry);
-          if (unknown.length > 0) {
-            diagnose({
-              nodeId: node.id,
-              code: 'unknown-field',
-              message:
-                `Not a Motion field in the plugin typings this build knows: ${unknown.join(', ')}. ` +
-                'Its raw data is included as read; its units and composition are unverified.',
-            });
-          }
-        }
+          code: 'node-over-budget',
+          message:
+            `This node's Motion alone is ~${cost} estimated tokens, over one call's budget. ` +
+            "get_node_motion returns it unbounded, which may exceed your client's output cap.",
+        });
+      } else {
+        spent += cost;
+        nodes.push(entry);
       }
     }
 
@@ -190,7 +214,7 @@ export const createGetMotionContextHandler =
             : ''),
       );
     }
-    if (!isMotionNode(root)) {
+    if (!hasMotionState(root)) {
       throw new Error(
         `get_motion_context: "${nodeId}" is a ${root.type}, which carries no Figma Motion. Pass a ` +
           'frame or layer id — a top-level frame covers its whole timeline.',

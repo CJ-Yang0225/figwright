@@ -1,69 +1,107 @@
-# Motion → code (animation)
+# Motion → code (carry Figma animation into the project)
 
-Figma Motion (beta) animates layers inside a top-level frame: applied **animation-style presets**,
-**keyframe tracks** on properties (translate, scale, rotate, opacity, …), paints and effects, all on
-the frame's **timeline**. Dropping it is a fidelity miss, the same class as dropping a shadow.
+Figma Motion (beta) animates the layers of a top-level frame: applied **animation-style presets**
+(fade / slide in), **keyframe tracks** on properties (translate, scale, rotate, opacity, …), paints
+and effects, all on the frame's **timeline**. Carry it into the project's animation mechanism instead
+of dropping it — a static component from an animated frame is a fidelity miss, the same class as
+dropping a shadow.
 
-The split of responsibility: Figwright returns the source record and says what it could not read;
-you choose how to implement it in this project; the rendered result, checked against the source,
-decides whether it matches. Reasoning past the data is fine — presenting that reasoning as what the
-design says is not.
-
-## Read the whole source
+## Read the animation
 
 1. **`get_motion_context`** once on every root you implement. It walks the whole subtree — hidden
-   layers and every instance's own children included, never deduped — and lists each node that has an
-   applied style, at least one keyframe, or an unknown field, with its raw Motion record.
-   - `coverage.status: "complete"` with no nodes is the only evidence there is nothing to animate. The
-     `motion` summary in `get_design_context` is a hint: dedupe, depth and budget projection all drop
-     it, so its absence proves nothing.
-   - `"partial"`: call the tool again on each `pendingNodeIds` entry (disjoint subtree roots) before
-     treating the inventory as whole. `pendingOmitted` > 0 means more unread roots exist than one
-     response could list: the inventory stays incomplete — say so, don't treat it as whole.
-   - `diagnostics`: `read-error` (that node was not read), `node-over-budget` (that node's record is
-     too large for one call; `get_node_motion` reads it unbounded), `unknown-field` (a field this
-     build's plugin typings don't define — raw data included, meaning unverified).
-2. Supplement per node as needed; each id from the inventory works directly:
-   - `get_design_context` on a listed node for its static geometry and styling — including instance
-     children that the main tree collapsed.
-   - `get_node_motion` for one node's record plus the editor's playhead.
-   - `get_motion_styles` for each preset's prop descriptions (type, default, unit).
-   - `get_variable_defs` to look up a `{ type: "VARIABLE_ALIAS", id }` in an easing or preset prop.
-     Its `valuesByMode` are the variable's definitions, not the value resolved for this node's mode.
-     Where the alias shows up (measured): a keyframe easing bound to a variable stays the alias in
-     `manualKeyframeTracks`, while `animations` carries the curve resolved for the current mode. On
-     an applied preset, `props.duration` bound to a variable makes the style's own `duration`
-     disappear from the read, and `props.delay` bound to a TIMING variable reads back resolved in
-     the style's `timelineOffset`. An alias is a design token: implement it as one (a CSS custom
-     property, a shared constant) rather than inlining the resolved value.
-   - `export_video` of the top-level frame as a visual reference of the animation to verify against.
-     Read what you need by id first: an export was seen to re-create the frame's layers under new ids,
-     after which an id picked up since an earlier change stopped resolving (re-run
-     `get_motion_context` to get current ones). Every Motion write and `export_video` result now
-     carries a fixed `⚠️ MOTION LAYER IDS MAY HAVE CHANGED` notice as a standing reminder of exactly
-     this, whether or not that particular call actually changed anything.
+   layers and each instance's own children included, never deduped — and lists every node with an
+   applied preset or a keyframe, with its raw Motion record.
+   - Only `coverage.status: "complete"` with no nodes means nothing animates. The `motion` summary in
+     `get_design_context` is a hint that dedupe, depth and budget all drop.
+   - `"partial"`: call it again on each `pendingNodeIds` entry before treating the inventory as
+     whole; `pendingOmitted` > 0 means more unread roots than one response could list — say so.
+   - `diagnostics`: `read-error` (that node was not read), `node-over-budget` (too large for one call;
+     `get_node_motion` reads it whole).
+2. Per node as needed: `get_design_context` on a listed id for its static styling, `get_node_motion`
+   for one node's record, `get_motion_styles` for a preset's prop descriptions, `get_variable_defs`
+   for a `{ type: "VARIABLE_ALIAS", id }`.
 
-## What the record says (plugin API typings)
+If the inventory is complete and empty, there's no animation to carry — don't invent one.
 
-- `animations` holds **all** keyframes on the node — those created by presets and by manual tracks —
-  so it is what plays. `manualKeyframeTracks` is the editable source of the manual ones: don't play
-  both, and don't add preset animation on top of `animations`.
-- A binding is `{ baseValue, timelineDuration, tracks[] }`; each track has a `keyframeOperation`
-  (`SET` / `OFFSET` / `SCALE`) and `keyframes[]` of `{ id, timelinePosition, value, easing }`, in
-  seconds. A track generated by a preset also carries an `animationPreset` object (not in the
-  typings) naming its applied style and that style's `timelineOffset`.
-- Paints and effects are indexed: `fills[0]`, `effects[1].RADIUS`, or `…properties[propertyId]`.
-  Keep the index and field — `effects[1].RADIUS` is not "the shadow".
-- `animationStyles` are applied presets with their configured `duration`, `timelineOffset` and
-  `props`; their keyframes are already in `animations`. A preset's `name` has been seen live as an
-  unexpanded localization key (`motion.preset_name.rotation`) — identify presets by `styleId`. Prop
-  units come from the preset's own descriptions (degrees, %, seconds) and may differ from the units of
-  the track values. An applied style's `styleId` is not the one `get_motion_styles` lists (a preset
-  applied as `Position` read back as `CodeComponentId:2:24` in the test file), so to find its
-  descriptions match the entry by its props, and say which one you took.
-- `timelines` gives each timeline's `id` and `duration` in seconds — currently the containing
-  top-level frame's. Nodes with the same timeline id share one clock; group by id, never by layer
-  order.
+## What the record says
+
+- **`animations`** holds every track that plays — those a preset generated (they carry
+  `animationPreset`) and the manual ones — so implement from it, and don't add the presets on top.
+  `get_motion_context` leaves out of **`manualKeyframeTracks`** each manual track `animations`
+  already plays as stored, keeping only those whose easing is bound to a variable.
+- A binding is `{ baseValue, timelineDuration, tracks[] }`; a track is `{ keyframeOperation,
+keyframes[] }`, each keyframe `{ timelinePosition (s), value, easing }`.
+- **`animationStyles`** are the applied presets with their `duration`, `timelineOffset` and `props`.
+  A preset's `name` can read as a localization key (`motion.preset_name.opacity`) and its `styleId`
+  as a `CodeComponentId:…` — identify it by its props, not those.
+- **`timelines`** give each timeline's `id` and `duration`; nodes on one timeline id share a clock.
+- **Variable aliases** — an easing or preset prop may read `{ type: "VARIABLE_ALIAS", id }`. A
+  keyframe easing bound to a variable stays the alias in `manualKeyframeTracks` while `animations`
+  carries the resolved curve; a preset's `props.delay` bound to a TIMING variable also reads back
+  resolved in its `timelineOffset`, and with `props.duration` bound the style's own `duration` is
+  absent. An alias is a design token: implement it as one (a CSS custom property, a shared constant),
+  not as its resolved value.
+
+## How Figma plays it (measured against its render)
+
+- **Easing belongs to the arriving keyframe**: a keyframe's easing shapes the segment that ends at
+  it. CSS `@keyframes` and WAAPI apply a keyframe's timing function to the segment that starts at it,
+  so each emitted keyframe takes the easing of the Figma keyframe after it.
+- **Time**: a manual track's `timelinePosition` is timeline seconds; a preset track's is relative to
+  its preset's `timelineOffset`. Keyframes are not evenly spaced — use the times as they are.
+- **Units**: `ROTATION` is degrees with positive = counterclockwise on screen — CSS `rotate` is
+  clockwise-positive, so negate. Translation is an offset from the layer's layout position, as CSS
+  `translate` is. `SCALE_XY` / `TRANSLATION_XY` values are `{x, y}`.
+- **`HOLD`** keeps the previous value up to its keyframe and switches exactly there.
+
+### Map to the detected stack
+
+Emit animation in the project's existing mechanism (check what's already used before adding a dep):
+CSS `@keyframes` / `transition`, Framer Motion, GSAP, Vue `<transition>`, Svelte transitions.
+
+| Figma field                                                                       | CSS / transform                 | Framer Motion                 |
+| --------------------------------------------------------------------------------- | ------------------------------- | ----------------------------- |
+| `TRANSLATION_X` / `TRANSLATION_Y` / `TRANSLATION_XY`                              | `translateX/Y` (`transform`)    | `x` / `y`                     |
+| `SCALE_X` / `SCALE_Y` / `SCALE_XY`                                                | `scaleX/Y`                      | `scaleX` / `scaleY` / `scale` |
+| `ROTATION`                                                                        | `rotate` (deg, **negated**)     | `rotate` (deg, **negated**)   |
+| `OPACITY`                                                                         | `opacity`                       | `opacity`                     |
+| `CORNER_RADIUS`, `STROKE_WEIGHT`, `WIDTH`/`HEIGHT`, `STACK_SPACING`, padding, gap | the matching CSS prop           | style value                   |
+| effect fields (shadow `OFFSET_X`/`RADIUS`/`COLOR`, …)                             | animate `box-shadow` / `filter` | `boxShadow` etc.              |
+
+A `FLOAT` keyframe value is the raw number; `COLOR` is RGBA 0–1 (→ hex/rgb); `VECTOR` is `{x,y}`.
+
+| Figma `MotionEasing.type`                                | CSS                                                          | Framer                                   |
+| -------------------------------------------------------- | ------------------------------------------------------------ | ---------------------------------------- |
+| `LINEAR`                                                 | `linear`                                                     | `"linear"`                               |
+| `EASE_IN` / `EASE_OUT` / `EASE_IN_AND_OUT`               | `ease-in` / `ease-out` / `ease-in-out`                       | `"easeIn"` / `"easeOut"` / `"easeInOut"` |
+| `EASE_*_BACK`, `CUSTOM_CUBIC_BEZIER`                     | `cubic-bezier(x1,y1,x2,y2)` from `easingFunctionCubicBezier` | that array                               |
+| `GENTLE` / `QUICK` / `BOUNCY` / `SLOW` / `CUSTOM_SPRING` | the spring curve below                                       | the spring curve below                   |
+| `HOLD`                                                   | `steps(1, jump-end)`                                         | `steps`                                  |
+
+A siblings row sharing a preset but stepping its `timelineOffset` (0, 0.1, 0.2, …) is a **staggered
+entrance**: emit it as stagger (Framer `staggerChildren`, CSS `animation-delay: calc(var(--i) * …)`,
+GSAP `stagger`), not N hardcoded delays.
+
+## Springs
+
+**Measured:** a spring is recorded as its easing `type` and a normalized `bounce`; the named ones
+store `GENTLE` 0.25, `QUICK` ≈ 0.4226, `BOUNCY` ≈ 0.6938, `SLOW` 0, and render as a `CUSTOM_SPRING`
+of that bounce. The curve spans its keyframe's whole segment, so the segment length — not a physical
+stiffness — sets its speed. Figma derives bounce from a physical spring as `max(0, 1 − ζ)` with
+damping ratio `ζ = damping / (2·√(mass·stiffness))`, so `ζ = 1 − bounce` for a bounce above 0;
+stiffness and mass are not recoverable.
+
+**Fitted** to Figma's renders — a fit, not Figma's documentation. With `u` the normalized time in the
+segment (0 → 1), `b` the bounce and `ζ = 1 − b`:
+
+- `0.01 ≤ b ≤ 0.8`: `ζω = 7.004 − ½·ln(b + 0.01025)`, `ω = ζω / ζ`, `ω_d = ω·√(1 − ζ²)`,
+  `x(u) = 1 − e^(−ζω·u)·(cos(ω_d·u) + (ζω/ω_d)·sin(ω_d·u))`.
+- `b = 0`: `x(u) = 1 − (1 + 11.25·u)·e^(−11.25·u)`.
+
+Checked against fresh renders at bounce 0, 0.25, 0.5 and 0.8 over a 1 s segment, and 0.5 over
+2 s: within 0.4 px per 100 px of travel. Past that range it is an extrapolation — say so. Where the
+platform takes no function (CSS, WAAPI), sample it into `linear()` finely enough to keep the
+overshoot. Report a spring built this way as "Figma's spring per a measured fit".
 
 ## Not in the record — never fill in a default as if it were
 
@@ -71,110 +109,8 @@ Loop / repeat, trigger (load, hover, click, scroll), interruption, transform ori
 reduced-motion behaviour. Prototype reactions (`get_reactions`) are a separate system from Motion
 playback. Ask the user, or state the policy you chose as yours.
 
-## How Figma plays it (measured)
-
-Measured against Figma's own render in a dedicated Figma test file (2026-09-22); Motion is beta,
-so re-verify when output disagrees:
-
-- **Easing belongs to the arriving keyframe**: a keyframe's easing shapes the segment that ends at
-  it. CSS `@keyframes` and WAAPI apply a keyframe's timing function to the segment that starts at it,
-  so each emitted keyframe takes the easing of the Figma keyframe after it.
-- **Time**: a manual track's `timelinePosition` is absolute timeline seconds; a preset track's is
-  relative to its `animationPreset.timelineOffset` (the applied style's). Keyframes at 1, 1.25 and 2 s
-  are not evenly spaced, and two keyframes are not a transition over the whole timeline.
-- **Holds**: before the first keyframe its value holds, after the last the last value holds. A
-  keyframe past the timeline's end is interpolated toward, and playback stops at the timeline's end.
-- **Composition**, one case only: a manual SET track and a Position preset's OFFSET track on
-  `TRANSLATION_X` rendered as layout position + SET + OFFSET. That is not a rule for other fields or
-  operations; SCALE was seen only on opacity with base 1.
-- **Units**: `ROTATION` is degrees with positive = counterclockwise on screen — CSS `rotate` is
-  clockwise-positive, so negate. `SCALE_XY` / `TRANSLATION_XY` are `{x, y}`. Scale is about the
-  layer's centre. Fill colours interpolate in sRGB (as CSS does for `rgb()`); a drop shadow's radius
-  matched a CSS blur radius of the same number within ~1% (one case).
-- **HOLD** keeps the previous value up to its keyframe and switches exactly there (a step at the end).
-
-## Springs — measured facts, then a fitted curve
-
-Keep the two layers apart when you implement a spring and when you report it.
-
-**Measured** (Figma's render, same file, 2026-09):
-
-- The record is the easing `type` (`GENTLE`, `QUICK`, `BOUNCY`, `SLOW`, `CUSTOM_SPRING`) and a
-  normalized `bounce`; the plugin API derives bounce from a physical mass, stiffness and damping
-  (`figma.motion.physicalSpringToNormalized`) and stores none of them. Stored bounces read back:
-  `GENTLE` 0.25, `QUICK` ≈ 0.4226, `BOUNCY` ≈ 0.6938, `SLOW` 0.
-- The curve spans its segment: one shape in normalized time over 0.5, 1 and 2 s segments (bounce 0.4
-  peaked at 1.087 of the travel at 30 % of the segment and settled by ~60 %). A source spring's
-  physical duration does not carry over.
-- The shape follows the stored bounce alone, not the type: each named spring rendered like a
-  `CUSTOM_SPRING` at its stored bounce, and `SLOW` like `CUSTOM_SPRING` 0.
-- Figma's own conversion from a physical spring (`normalize_motion_spring`, measured on one Figma
-  build over 15 inputs, not documented) is `bounce = max(0, 1 − ζ)` with
-  `ζ = damping / (2·√(mass·stiffness))`. Read the other way, `ζ = 1 − bounce` recovers the damping
-  ratio for a bounce above 0 — the same `ζ` as in the fitted curve below — while bounce 0 means only
-  `ζ ≥ 1` (critical or over-damped). Stiffness and mass are not recoverable: a library spring set
-  from `ζ` alone still needs a speed, which is the segment length here.
-
-**Fitted** — a curve fitted to those renders, not Figma documentation. With `u` the normalized time
-in the segment (0 → 1), `b` the bounce and `ζ = 1 − b`:
-
-- `0.01 ≤ b ≤ 0.8`: `ζω = 7.004 − ½·ln(b + 0.01025)`, `ω_d = ω·√(1 − ζ²)`,
-  `x(u) = 1 − e^(−ζωu)·(cos(ω_d·u) + (ζω/ω_d)·sin(ω_d·u))`.
-- `b = 0`: critically damped, `x(u) = 1 − (1 + 11.25u)·e^(−11.25u)`.
-- End the segment on its keyframe value (`x(1) = 1`); the fit is already within 0.1 % of the travel at `u = 1`.
-
-Residuals, per 100 px of travel: at most 0.591 px on the 24 curves it was fitted to, and at most
-0.739 px on 8 springs registered before they were rendered. It holds for `b = 0` and
-`0.01 ≤ b ≤ 0.8`, which covers every named spring. Below 0.01 (other than 0) and above 0.8 there is no
-data: using the formula there is an extrapolation, so say so. Where the platform takes no function
-(CSS, WAAPI), sample it into `linear()`: 400 intervals kept the error under 0.1 % of the travel up to
-bounce 0.8, while 41 points reached ~4 % at `BOUNCY`. Report a spring built this way as "Figma's
-spring per a measured fit", and, since Motion is beta, compare it with the export when it matters.
-
-## Still open — settle per case and say what you assumed
-
-- **When the read carries `MOTION EASING MAY NOT BE WHAT FIGMA PLAYS`.** `get_node_motion` and
-  `get_motion_context` append this notice for the two records that cannot say what plays, listing
-  each by node and path:
-  - a `CUSTOM_SPRING` with bounce 0.25 — a real 0.25 spring, or one written without a bounce, which
-    Figma plays **LINEAR**;
-  - a `CUSTOM_CUBIC_BEZIER` of exactly `(0, 0, 0.58, 1)` — written without points, which Figma plays
-    roughly as **`(0.5, 0, 0.5, 1)`**.
-
-  The record is identical either way (measured). Implementing the record gives the 0.25 spring or
-  `(0, 0, 0.58, 1)`; Figma may be playing LINEAR or ≈ `(0.5, 0, 0.5, 1)`. Only the export tells which
-  (`export_video`, check it is current, measure that segment), and which one to ship is the user's
-  call: show them the record and what the export shows, and ask. Do not copy such a record to another
-  node as-is — writing it back makes an unbounced spring a real 0.25 spring (measured). Figwright
-  refuses to write either easing without its parameters, so new writes cannot create this state;
-  records already in a file still can hold it.
-
-- **SCALE composition** beyond opacity, OFFSET on non-zero bases, and anything the diagnostics flag
-  as `unknown-field`: carry the data, flag the meaning as unverified.
-
-## Implement
-
-Use the animation mechanism the project already uses (look at its dependencies and existing
-animations); add one only with the user's agreement. Keep the static layout intact — a wrapper added
-for motion must not change auto-layout or the containing block. Honour `prefers-reduced-motion` as
-the product's policy; it is not part of the source.
-
 ## Verify
 
-Compare the implementation with the source at the start, mid-segment, just before / at / after each
-keyframe, and the end, on the shared clock: computed style or transform in the browser against the raw
-values, plus frames of the `export_video` reference. Record the tolerance and sampling resolution.
-List approximated, unsupported and unverified items as such — never report them as matching.
-
-What the reference can and cannot prove:
-
-- The export may show a document state a minute or two older than the last edit. A matching length
-  does not prove it is current: also confirm the frame at a keyframe's time shows that keyframe's
-  value in the current record. Without such a witness, the reference is unverified. Exports are
-  capped at 30 fps on some plans, so time resolution is ~33 ms.
-- A WebM export is chroma-subsampled and inter-frame coded: good for position, size and rotation;
-  opacity and colour drift by a few percent while they change. A GIF export keeps a flat colour's
-  opacity and colour within ~1%, but its dither makes text unmeasurable and its delta frames can leave
-  stale pixels — use it for flat opacity and colour only.
-- In the browser, pause every animation, seek it (`animation.currentTime`), and wait a rendered frame
-  before each screenshot; the first shot after a seek can otherwise show the previous time.
+Compare the implementation with the source at the start, mid-segment, at each keyframe and the end:
+the browser's computed style or transform against the record's values, plus frames of an
+`export_video` of the frame as a visual reference.

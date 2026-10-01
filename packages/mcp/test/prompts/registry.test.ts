@@ -29,17 +29,10 @@ describe('prompts registry', () => {
     expect(text).toContain('token_map');
     expect(text).toContain('unmatchedProps');
     // The static tree's motion summary is not evidence of no animation (dedupe drops instance
-    // children), so the inventory has to be taught, not merely allowed.
+    // children), so the inventory has to be taught, not merely allowed — with the measured rule a
+    // CSS port gets wrong by default.
     expect(text).toContain('get_motion_context');
-    // The fitted spring must stay labelled as a fit, and the read-side easing notice must be
-    // recognisable by the header the read tools actually append.
-    expect(text).toContain('a measured fit, not Figma');
-    expect(text).toContain('MOTION EASING MAY NOT BE WHAT FIGMA PLAYS');
-    // Where a variable alias survives a read and where it is already resolved, and the measured
-    // bounce → damping-ratio inverse, labelled as measured rather than documented.
-    expect(text).toContain('stays the alias in manualKeyframeTracks');
-    expect(text).toContain('reads back resolved in the style');
-    expect(text).toContain('ζ = 1 − bounce recovers the damping ratio');
+    expect(text).toContain('easing shapes the segment arriving at it');
   });
 
   it('interpolates a provided nodeId into the workflow', () => {

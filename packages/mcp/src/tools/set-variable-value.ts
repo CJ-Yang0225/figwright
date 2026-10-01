@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { MISSING_VARIABLE_EASING_PARAMS, refuseMissingEasingParams } from './motion-schemas.js';
+import { variableEasingSchema } from './motion-schemas.js';
 import type { ToolSpec } from './spec.js';
 
 export const SET_VARIABLE_VALUE_TOOL_NAME = 'set_variable_value';
@@ -31,18 +31,9 @@ const variableValue = z
         z.looseObject({ type: z.literal('VARIABLE_ALIAS'), id: z.string() }),
       ]),
     }),
-    // An EASING variable's curve. It must stay after the alias member: both are objects keyed by
-    // `type`, and this one accepts any string, so it would otherwise swallow aliases. It carries the
-    // same missing-parameter refusal as every other Motion easing input.
-    z
-      .looseObject({
-        type: z.string(),
-        easingFunctionCubicBezier: z
-          .looseObject({ x1: z.number(), y1: z.number(), x2: z.number(), y2: z.number() })
-          .optional(),
-        easingFunctionSpring: z.looseObject({ bounce: z.number() }).optional(),
-      })
-      .superRefine(refuseMissingEasingParams(MISSING_VARIABLE_EASING_PARAMS)),
+    // An EASING variable's curve, with the requirement every Motion easing input has. Its `type`
+    // enum has no VARIABLE_ALIAS, so it cannot swallow the alias member above.
+    variableEasingSchema,
   ])
   .describe(
     'boolean | number | string | { r,g,b,a } | { type:"VARIABLE_ALIAS", id } | ' +
@@ -57,10 +48,8 @@ export const setVariableValueTool: ToolSpec = {
     '(0–1), an alias { type: "VARIABLE_ALIAS", id } pointing at another variable, or a composed ' +
     'color { color, opacity } that pairs a color with a separate opacity — each half either a ' +
     'concrete value or an alias, with at least one of the two an alias. An EASING variable takes a ' +
-    'Motion easing { type, easingFunctionSpring?: { bounce }, easingFunctionCubicBezier?: { x1, y1, ' +
-    'x2, y2 } } — give CUSTOM_SPRING its bounce and CUSTOM_CUBIC_BEZIER its control points; a ' +
-    'TIMING variable takes a number of seconds. Create the variable first with create_variable. ' +
-    'Returns { ok, variableId, name }.',
+    'Motion easing, a TIMING variable a number of seconds. Create the variable first with ' +
+    'create_variable. Returns { ok, variableId, name }.',
   inputSchema: z.object({
     variableId: z.string().describe('Variable id'),
     modeId: z.string().describe('Mode id (from the collection)'),

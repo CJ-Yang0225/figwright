@@ -65,7 +65,6 @@ import { createListFilesHandler } from './list-files.js';
 import { createSetLockedHandler } from './lock-nodes.js';
 import { createMoveNodesHandler } from './move-nodes.js';
 import { createNavigateToPageHandler } from './navigate-to-page.js';
-import { createNormalizeMotionSpringHandler } from './normalize-motion-spring.js';
 import { createPingHandler } from './ping.js';
 import { createRemoveAnimationStyleHandler } from './remove-animation-style.js';
 import { createRemoveManualKeyframeTrackHandler } from './remove-manual-keyframe-track.js';
@@ -235,7 +234,6 @@ export const createSandboxHandlers = (figmaApi: typeof figma): SandboxHandlers =
     get_motion_styles: createGetMotionStylesHandler(figmaCtx),
     get_node_motion: createGetNodeMotionHandler(figmaCtx),
     get_motion_context: createGetMotionContextHandler(figmaCtx),
-    normalize_motion_spring: createNormalizeMotionSpringHandler(figmaCtx),
     list_files: createListFilesHandler(figmaCtx),
     get_design_context: createGetDesignContextHandler(figmaCtx),
     get_screenshot: createGetScreenshotHandler(figmaCtx),

@@ -1,10 +1,8 @@
 import { type ChildProcess, spawn } from 'node:child_process';
 import { once as onExit } from 'node:events';
 import { existsSync, rmSync } from 'node:fs';
-import { mkdtemp, rm } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -390,64 +388,6 @@ describe.skipIf(!existsSync(DIST_ENTRY))('MCP wire contract (built dist)', () =>
     }
   }, 30_000);
 
-  it('converts a physical spring through the built server to a fake plugin and back', async () => {
-    const server = new WireClient();
-    await server.start();
-    await server.handshake(LATEST_CLIENT_PROTOCOL);
-    const plugin = await connectFakePlugin({
-      port: server.port,
-      handlers: { normalize_motion_spring: () => ({ bounce: 0.5 }) },
-    });
-
-    try {
-      const res = await server.send('tools/call', {
-        name: 'normalize_motion_spring',
-        arguments: { mass: 1, stiffness: 100, damping: 10 },
-      });
-      const content = res.result?.content as { type: string; text: string }[];
-
-      expect(res.result?.isError).toBeUndefined();
-      expect(JSON.parse(content[0]?.text ?? '{}')).toEqual({ bounce: 0.5 });
-    } finally {
-      closeSocket(plugin);
-      await server.stop();
-    }
-  }, 30_000);
-
-  it("explains Figma's by-id lookup timeout on the failure the agent sees", async () => {
-    // The explanation is wired in index.ts; its unit tests would stay green with that line deleted.
-    const figma =
-      'Unable to establish connection to Figma after 10 seconds. Please check your internet connection.';
-    const server = new WireClient();
-    await server.start();
-    await server.handshake(LATEST_CLIENT_PROTOCOL);
-    const plugin = await connectFakePlugin({
-      port: server.port,
-      handlers: {
-        get_node_motion: () => {
-          throw new Error(figma);
-        },
-      },
-    });
-
-    try {
-      const res = await server.send('tools/call', {
-        name: 'get_node_motion',
-        arguments: { nodeId: '999:999' },
-      });
-
-      expect(res.result?.isError).toBe(true);
-      const content = res.result?.content as { type: string; text: string }[];
-      const text = content.map(c => c.text).join('');
-      expect(text).toContain(figma);
-      expect(text.split('FIGMA GAVE UP LOOKING UP AN ID')).toHaveLength(2);
-      expect(text).toMatch(/re-run the Figwright plugin/);
-    } finally {
-      closeSocket(plugin);
-      await server.stop();
-    }
-  }, 30_000);
-
   it('carries raw Motion through the built server untouched, fields it has never seen included', async () => {
     // The inventory's contract is that nothing between the Figma API and the agent reshapes Motion
     // data. Every hop — msgpack, the relay, the SDK's result handling — is real here, so a
@@ -574,82 +514,6 @@ describe.skipIf(!existsSync(DIST_ENTRY))('MCP wire contract (built dist)', () =>
     } finally {
       closeSocket(plugin);
       await server.stop();
-    }
-  }, 30_000);
-
-  it('attaches the layer-id notice to Motion writes, a Motion batch and export_video — and only there', async () => {
-    const server = new WireClient();
-    await server.start();
-    await server.handshake(LATEST_CLIENT_PROTOCOL);
-    const outDir = await mkdtemp(join(tmpdir(), 'figwright-wire-export-'));
-    const trackOp = {
-      nodeId: '1:2',
-      field: { type: 'PROPERTY', name: 'OPACITY' },
-      track: { keyframes: [{ timelinePosition: 0, value: { type: 'FLOAT', value: 1 } }] },
-    };
-    const plugin = await connectFakePlugin({
-      port: server.port,
-      handlers: {
-        apply_manual_keyframe_track: () => ({ ok: true, nodeId: '1:2' }),
-        batch: () => ({ ok: true, results: [{ ok: true, nodeId: '1:2' }] }),
-        rename_node: () => ({ ok: true, nodeId: '1:2' }),
-        // A fake plugin that never encoded anything — the `path: null` shape export_video reports
-        // for a static frame, Dev Mode, or FigJam. No error, so the layer-id notice still fires on it.
-        export_video: () => ({ nodeId: '1:1', format: 'MP4', reason: 'static' }),
-        // What the fake plugin does when a handler throws: an INTERNAL error, same as a real
-        // editor-gate or alias-check rejection before any Figma mutation runs.
-        remove_animation_style: () => {
-          throw new Error('editor gate: not in Figma Design');
-        },
-      },
-    });
-
-    const noticesIn = (res: JsonRpcResponse): number => {
-      const content = (res.result?.content as { type: string; text: string }[] | undefined) ?? [];
-      return content.filter(c => c.text?.includes('LAYER IDS MAY HAVE CHANGED')).length;
-    };
-
-    try {
-      const track = await server.send('tools/call', {
-        name: 'apply_manual_keyframe_track',
-        arguments: trackOp,
-      });
-      expect(track.result?.isError).toBeUndefined();
-      expect(noticesIn(track)).toBe(1);
-
-      const batch = await server.send('tools/call', {
-        name: 'batch',
-        arguments: { ops: [{ tool: 'apply_manual_keyframe_track', params: trackOp }] },
-      });
-      expect(batch.result?.isError).toBeUndefined();
-      expect(noticesIn(batch)).toBe(1);
-
-      const video = await server.send('tools/call', {
-        name: 'export_video',
-        arguments: { nodeId: '1:1', format: 'MP4', outPath: join(outDir, 'clip.mp4') },
-      });
-      expect(video.result?.isError).toBeUndefined();
-      const videoContent = video.result?.content as { type: string; text: string }[];
-      expect(JSON.parse(videoContent[0]?.text ?? '{}')).toMatchObject({ path: null });
-      expect(noticesIn(video)).toBe(1);
-
-      const rename = await server.send('tools/call', {
-        name: 'rename_node',
-        arguments: { nodeId: '1:2', name: 'ok' },
-      });
-      expect(rename.result?.isError).toBeUndefined();
-      expect(noticesIn(rename)).toBe(0);
-
-      const rejected = await server.send('tools/call', {
-        name: 'remove_animation_style',
-        arguments: { nodeId: '1:2' },
-      });
-      expect(rejected.result?.isError).toBe(true);
-      expect(noticesIn(rejected)).toBe(0);
-    } finally {
-      closeSocket(plugin);
-      await server.stop();
-      await rm(outDir, { recursive: true, force: true });
     }
   }, 30_000);
 

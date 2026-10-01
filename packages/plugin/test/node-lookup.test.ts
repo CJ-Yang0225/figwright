@@ -48,20 +48,19 @@ const node = (id: string, children?: FakeNode[], visible = true): FakeNode => {
 };
 
 /**
- * The by-id timeout as a test double: the by-id lookup rejects every instance-qualified id with
- * Figma's bare string, and — unless `unknown: 'null'` — every id it does not know as well
- * (`999:999` timed out live too). Plain ids it knows resolve. Every call is recorded.
+ * A file whose by-id lookup either works (`healthy`) or rejects every instance-qualified id with
+ * Figma's bare string while plain ids still resolve. Every call to the real lookup is recorded.
  */
-const r7Figma = (opts: { unknown: 'reject' | 'null' } = { unknown: 'reject' }) => {
+const fakeFigma = (byId: 'healthy' | 'rejects-instance-ids') => {
   const hidden = node('I2:6;2:7', undefined, false);
   const nestedChild = node('I2:6;3:1;3:2');
   const sublayer = node('I2:6;2:5');
-  const instance = node('2:6', [sublayer, hidden, node('I2:6;3:1', [nestedChild])]);
+  const nested = node('I2:6;3:1', [nestedChild]);
+  const instance = node('2:6', [sublayer, hidden, nested]);
   const frame = node('1:3', [instance]);
-  const plain = new Map<string, FakeNode>([
-    ['1:3', frame],
-    ['2:6', instance],
-  ]);
+  const all = new Map<string, FakeNode>(
+    [frame, instance, sublayer, hidden, nested, nestedChild].map(n => [n.id, n]),
+  );
   const lookups: string[] = [];
   const figmaCtx = {
     editorType: 'figma',
@@ -69,33 +68,61 @@ const r7Figma = (opts: { unknown: 'reject' | 'null' } = { unknown: 'reject' }) =
     skipInvisibleInstanceChildren: false,
     getNodeByIdAsync: async (id: string) => {
       lookups.push(id);
-      if (id.startsWith('I')) throw BY_ID_TIMEOUT; // eslint-disable-line no-throw-literal
-      const found = plain.get(id);
-      if (found !== undefined) return found;
-      if (opts.unknown === 'reject') throw BY_ID_TIMEOUT; // eslint-disable-line no-throw-literal
-      return null;
+      if (byId === 'rejects-instance-ids' && id.startsWith('I')) throw BY_ID_TIMEOUT; // eslint-disable-line no-throw-literal
+      return all.get(id) ?? null;
     },
   } as unknown as typeof figma;
-  return { figmaCtx, lookups, instance, sublayer, hidden, nestedChild };
+  return { figmaCtx, lookups, sublayer, nestedChild };
 };
 
-describe('instance-qualified ids resolve from the instance root, never through Figma by id', () => {
+describe('a healthy by-id lookup is used as is', () => {
+  it('resolves an instance-qualified id through Figma, without walking the instance', async () => {
+    const { figmaCtx, lookups, nestedChild } = fakeFigma('healthy');
+    const ctx = withInstanceIdLookup(figmaCtx);
+    expect(await ctx.getNodeByIdAsync('I2:6;3:1;3:2')).toBe(nestedChild);
+    expect(await ctx.getNodeByIdAsync('I2:6;9:9')).toBeNull();
+    expect(lookups).toEqual(['I2:6;3:1;3:2', 'I2:6;9:9']);
+  });
+
+  it('passes a plain id, and its rejection, through unchanged', async () => {
+    const { figmaCtx, lookups } = fakeFigma('rejects-instance-ids');
+    const ctx = withInstanceIdLookup(figmaCtx);
+    expect(await ctx.getNodeByIdAsync('999:999')).toBeNull();
+    const rejecting = withInstanceIdLookup({
+      getNodeByIdAsync: async () => Promise.reject(new Error('plain lookup failed')),
+    } as unknown as typeof figma);
+    await expect(rejecting.getNodeByIdAsync('1:3')).rejects.toThrow('plain lookup failed');
+    expect(lookups).toEqual(['999:999']);
+  });
+});
+
+describe('a by-id lookup that rejects instance-qualified ids', () => {
   it.each([
     ['two-level', 'I2:6;2:5'],
     ['three-level (nested instance)', 'I2:6;3:1;3:2'],
     ['hidden sublayer', 'I2:6;2:7'],
-  ])('get_node_motion reads a %s sublayer', async (_, id) => {
-    const { figmaCtx, lookups } = r7Figma();
+  ])('falls back to the instance root for a %s sublayer', async (_, id) => {
+    const { figmaCtx, lookups } = fakeFigma('rejects-instance-ids');
     const result = (await createSandboxHandlers(figmaCtx).get_node_motion!({
       nodeId: id,
     })) as GetNodeMotionResult;
     expect(result.nodeId).toBe(id);
     expect(result.motion?.animations).toEqual({ OPACITY: { keyframes: [{ time: 0, value: id }] } });
-    expect(lookups).toEqual(['2:6']);
+    expect(lookups).toEqual([id, '2:6']);
   });
 
-  it('a write handler (rename_node) changes the same node', async () => {
-    const { figmaCtx, lookups, nestedChild, sublayer } = r7Figma();
+  it('stops asking Figma by id once it has rejected, for the rest of the run', async () => {
+    const { figmaCtx, lookups, sublayer, nestedChild } = fakeFigma('rejects-instance-ids');
+    const ctx = withInstanceIdLookup(figmaCtx);
+    expect(await ctx.getNodeByIdAsync('I2:6;2:5')).toBe(sublayer);
+    expect(await ctx.getNodeByIdAsync('I2:6;3:1;3:2')).toBe(nestedChild);
+    expect(await ctx.getNodeByIdAsync('I2:6;9:9')).toBeNull();
+    expect(await ctx.getNodeByIdAsync('I7:7;2:5')).toBeNull();
+    expect(lookups).toEqual(['I2:6;2:5', '2:6', '2:6', '2:6', '7:7']);
+  });
+
+  it('lets a write handler (rename_node) change the node it falls back to', async () => {
+    const { figmaCtx, nestedChild, sublayer } = fakeFigma('rejects-instance-ids');
     const result = (await createSandboxHandlers(figmaCtx).rename_node!({
       nodeId: 'I2:6;3:1;3:2',
       name: 'renamed',
@@ -104,43 +131,6 @@ describe('instance-qualified ids resolve from the instance root, never through F
     expect(result).toEqual({ ok: true, nodeId: 'I2:6;3:1;3:2' });
     expect(nestedChild.name).toBe('renamed');
     expect(sublayer.name).toBe('I2:6;2:5');
-    expect(lookups.some(id => id.startsWith('I'))).toBe(false);
-  });
-
-  it('a sublayer missing from an existing instance takes each handler’s miss path', async () => {
-    const { figmaCtx, lookups } = r7Figma();
-    const handlers = createSandboxHandlers(figmaCtx);
-    const miss = (await handlers.get_node_motion!({ nodeId: 'I2:6;9:9' })) as GetNodeMotionResult;
-    expect(miss).toEqual({ nodeId: 'I2:6;9:9', motion: null });
-    await expect(handlers.rename_node!({ nodeId: 'I2:6;9:9', name: 'x' })).rejects.toThrow(
-      'rename_node: node I2:6;9:9 not found',
-    );
-    expect(lookups.some(id => id.startsWith('I'))).toBe(false);
-  });
-
-  it('a missing instance root is a miss when Figma answers null for that plain id', async () => {
-    const { figmaCtx, lookups } = r7Figma({ unknown: 'null' });
-    const miss = (await createSandboxHandlers(figmaCtx).get_node_motion!({
-      nodeId: 'I7:7;2:5',
-    })) as GetNodeMotionResult;
-    expect(miss).toEqual({ nodeId: 'I7:7;2:5', motion: null });
-    expect(lookups).toEqual(['7:7']);
-  });
-
-  it('a missing instance root fails exactly as a plain unknown id does when Figma rejects it', async () => {
-    const { figmaCtx, lookups } = r7Figma();
-    const handlers = createSandboxHandlers(figmaCtx);
-    await expect(handlers.get_node_motion!({ nodeId: 'I7:7;2:5' })).rejects.toBe(BY_ID_TIMEOUT);
-    await expect(handlers.get_node_motion!({ nodeId: '7:7' })).rejects.toBe(BY_ID_TIMEOUT);
-    expect(lookups).toEqual(['7:7', '7:7']);
-  });
-
-  it('a plain id goes to Figma unchanged', async () => {
-    const { figmaCtx, lookups, instance } = r7Figma({ unknown: 'null' });
-    const ctx = withInstanceIdLookup(figmaCtx);
-    expect(await ctx.getNodeByIdAsync('2:6')).toBe(instance);
-    expect(await ctx.getNodeByIdAsync('999:999')).toBeNull();
-    expect(lookups).toEqual(['2:6', '999:999']);
   });
 });
 

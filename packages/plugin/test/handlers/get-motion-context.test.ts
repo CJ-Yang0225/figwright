@@ -5,7 +5,10 @@ import {
 } from '@figwright/shared';
 import { describe, expect, it } from 'vitest';
 
-import { createGetMotionContextHandler } from '../../src/handlers/get-motion-context.js';
+import {
+  createGetMotionContextHandler,
+  MAX_VISITED_NODES,
+} from '../../src/handlers/get-motion-context.js';
 
 interface FakeNode {
   id: string;
@@ -165,23 +168,68 @@ describe('get_motion_context handler', () => {
     expect(r.diagnostics).toBeUndefined();
   });
 
-  it('flags an animated field the typings do not define, keeping its data', async () => {
+  it('carries a field the typings do not define through as read', async () => {
     const n = node('1:2', {
       animations: {
-        BLUR_AMOUNT: { baseValue: { type: 'FLOAT', value: 0 } },
-        effects: { 1: { RADIUS: binding([0, 1]), GLOW: binding([0, 1]) } },
+        BLUR_AMOUNT: binding([0, 1]),
+        effects: { 1: { GLOW: binding([0, 1]) } },
       },
     });
     const r = await run([n], '1:2');
     expect(r.coverage.status).toBe('complete');
-    expect(r.nodes[0]?.motion.animations).toHaveProperty('BLUR_AMOUNT');
-    expect(r.diagnostics).toEqual([
-      {
-        nodeId: '1:2',
-        code: 'unknown-field',
-        message: expect.stringMatching(/animations\.BLUR_AMOUNT, animations\.effects\.1\.GLOW/),
+    expect(r.nodes[0]?.motion.animations).toEqual(n.animations);
+    expect(r.diagnostics).toBeUndefined();
+  });
+
+  // Every manual track also plays from `animations` under the same id; the copy in
+  // manualKeyframeTracks adds only an authored baseValue Figma does not play, unless it binds a
+  // variable, which `animations` holds resolved.
+  it('leaves out manual tracks animations already carries, keeping those that bind a variable', async () => {
+    const played = binding([0, 1]).tracks[0]!;
+    const aliased = {
+      id: 'aliased',
+      keyframes: [
+        {
+          id: 'a0',
+          timelinePosition: 1,
+          value: { type: 'FLOAT', value: 1 },
+          easing: { type: 'VARIABLE_ALIAS', id: 'V:ease' },
+        },
+      ],
+    };
+    const unplayed = { id: 'not-in-animations', keyframes: played.keyframes };
+    const n = node('1:2', {
+      animations: {
+        OPACITY: binding([0, 1]),
+        ROTATION: { tracks: [{ ...aliased, keyframeOperation: 'SET' }] },
+        effects: { 0: { RADIUS: binding([0, 1]) } },
       },
-    ]);
+    });
+    n.manualKeyframeTracks = {
+      OPACITY: { ...played, baseValue: { type: 'FLOAT', value: 0 } },
+      ROTATION: aliased,
+      SCALE_X: unplayed,
+      effects: { 0: { RADIUS: { ...played, baseValue: { type: 'FLOAT', value: 0 } } } },
+    };
+    const r = await run([n], '1:2');
+    expect(r.nodes[0]?.motion.manualKeyframeTracks).toEqual({
+      ROTATION: aliased,
+      SCALE_X: unplayed,
+    });
+    expect(r.nodes[0]?.motion.animations).toEqual(n.animations);
+  });
+
+  // Measured in Dev Mode: a node's Motion state reads, but write methods such as
+  // applyAnimationStyle are absent, so a read keyed on them would see no Motion at all.
+  it('reads a node that exposes Motion state without the write methods (Dev Mode)', async () => {
+    const readOnly = (n: FakeNode): FakeNode => {
+      delete n.applyAnimationStyle;
+      return n;
+    };
+    const root = readOnly(node('1:1', { children: [readOnly(animated('1:2'))] }));
+    const r = await run([root], '1:1');
+    expect(ids(r)).toEqual(['1:2']);
+    expect(r.coverage.status).toBe('complete');
   });
 
   it('turns a descendant read failure into a diagnostic, not an absence', async () => {
@@ -216,10 +264,14 @@ describe('get_motion_context handler', () => {
   });
 
   it('stops at the node limit with disjoint pending roots that together cover the rest', async () => {
-    // 40 sections × 50 layers = 2,041 nodes, over the 1,500 visit cap; one animated layer each.
-    const sections = range(40).map(s =>
+    // Sections of 50 layers until the tree is past the visit cap; an animated layer in every tenth,
+    // few enough that the output budget is never what stops the walk.
+    const count = Math.ceil((MAX_VISITED_NODES + 500) / 51);
+    const sections = range(count).map(s =>
       node(`2:${s}`, {
-        children: range(50).map(l => (l === 25 ? animated(`3:${s}-${l}`) : node(`3:${s}-${l}`))),
+        children: range(50).map(l =>
+          l === 25 && s % 10 === 0 ? animated(`3:${s}-${l}`) : node(`3:${s}-${l}`),
+        ),
       }),
     );
     const root = node('1:1', { children: sections });
@@ -227,26 +279,27 @@ describe('get_motion_context handler', () => {
     const first = await run([root], '1:1');
     expect(first.coverage).toMatchObject({
       status: 'partial',
-      visitedNodes: 1500,
+      visitedNodes: MAX_VISITED_NODES,
       reasons: ['node-limit'],
     });
 
     const all = (await drain([root], '1:1')).flatMap(ids);
     expect(new Set(all).size).toBe(all.length);
-    expect(all).toHaveLength(40);
+    expect(all).toHaveLength(Math.ceil(count / 10));
   });
 
   it('lists every pending root of a wide tree while the output has room for them', async () => {
-    // 3,000 direct children: half are left unread, and each must stay reachable by id.
+    // 1,500 direct children past the visit cap are left unread, and each must stay reachable by id.
+    const children = MAX_VISITED_NODES + 1500;
     const root = node('1:1', {
-      children: range(3000).map(i => (i % 500 === 499 ? animated(`6:${i}`) : node(`6:${i}`))),
+      children: range(children).map(i => (i % 500 === 499 ? animated(`6:${i}`) : node(`6:${i}`))),
     });
     const first = await run([root], '1:1');
     expect(first.coverage.pendingNodeIds).toHaveLength(1501);
     expect(first.coverage.pendingOmitted).toBeUndefined();
 
     const all = (await drain([root], '1:1')).flatMap(ids);
-    expect(all).toEqual(['6:499', '6:999', '6:1499', '6:1999', '6:2499', '6:2999']);
+    expect(all).toEqual(range(children / 500).map(k => `6:${k * 500 + 499}`));
   });
 
   it('hands back the node that no longer fits, and reads it on its own call', async () => {
@@ -424,12 +477,12 @@ describe('get_motion_context handler', () => {
       expect(r.diagnostics).toBeUndefined();
     });
 
-    it('flags an unknown field in the manual tracks, and lists a node carrying only that', async () => {
+    it('leaves out a node whose only track has no keyframe', async () => {
       const n = node('1:2');
-      n.manualKeyframeTracks = { GLOW_SIZE: { id: 't', keyframes: [] } };
+      n.manualKeyframeTracks = { OPACITY: { id: 't', keyframes: [] } };
       const r = await run([n], '1:2');
-      expect(ids(r)).toEqual(['1:2']);
-      expect(r.diagnostics?.[0]?.message).toMatch(/manualKeyframeTracks\.GLOW_SIZE/);
+      expect(ids(r)).toEqual([]);
+      expect(r.coverage.status).toBe('complete');
     });
 
     it('caps a long error message and survives a non-Error throw', async () => {
@@ -453,15 +506,15 @@ describe('get_motion_context handler', () => {
     it('treats exactly the visit cap as complete and one more as partial', async () => {
       const tree = (n: number): FakeNode =>
         node('1:1', { children: range(n - 1).map(i => node(`7:${i}`)) });
-      expect((await run([tree(1500)], '1:1')).coverage).toEqual({
+      expect((await run([tree(MAX_VISITED_NODES)], '1:1')).coverage).toEqual({
         status: 'complete',
-        visitedNodes: 1500,
+        visitedNodes: MAX_VISITED_NODES,
         animatedNodes: 0,
       });
-      expect((await run([tree(1501)], '1:1')).coverage).toMatchObject({
+      expect((await run([tree(MAX_VISITED_NODES + 1)], '1:1')).coverage).toMatchObject({
         status: 'partial',
-        visitedNodes: 1500,
-        pendingNodeIds: ['7:1499'],
+        visitedNodes: MAX_VISITED_NODES,
+        pendingNodeIds: [`7:${MAX_VISITED_NODES - 1}`],
       });
     });
 

@@ -1,7 +1,7 @@
 import type { GetNodeMotionResult } from '@figwright/shared';
 
 import type { SandboxToolHandler } from '../dispatcher.js';
-import { isMotionNode, readNodeMotion, readPlayheadPosition } from './motion-shared.js';
+import { hasMotionState, readNodeMotion, readPlayheadPosition } from './motion-shared.js';
 
 /**
  * Read a node's Motion state (applied styles, animations, manual keyframe tracks, timelines). Reads
@@ -19,7 +19,7 @@ export const createGetNodeMotionHandler =
     // Editor-wide, so it's reported even when this node has no Motion of its own.
     const playheadPosition = readPlayheadPosition(figmaCtx);
     const node = await figmaCtx.getNodeByIdAsync(nodeId);
-    if (node === null || !isMotionNode(node)) {
+    if (node === null || !hasMotionState(node)) {
       const miss: GetNodeMotionResult = { nodeId, motion: null };
       if (playheadPosition !== undefined) miss.playheadPosition = playheadPosition;
       return miss;

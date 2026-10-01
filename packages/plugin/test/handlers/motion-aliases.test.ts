@@ -4,9 +4,9 @@ import { createApplyAnimationStyleHandler } from '../../src/handlers/apply-anima
 import { createApplyManualKeyframeTrackHandler } from '../../src/handlers/apply-manual-keyframe-track.js';
 import { createBatchHandler } from '../../src/handlers/batch.js';
 
-// Figma accepts a Motion variable binding of the wrong type (or to no variable at all), reads it back
-// as the alias it was given, and plays something else — measured 2026-09-27. These are refused in
-// the sandbox, the only side that can see a variable's type, before any Figma mutation.
+// Figma accepts a Motion variable binding of the wrong type, or to no variable at all, and reads it
+// back as the alias it was given. These are refused in the sandbox, the only side that can see a
+// variable's type, before any Figma mutation.
 
 const VARIABLES: Record<string, { id: string; name: string; resolvedType: string }> = {
   'V:ease': { id: 'V:ease', name: 'motion/ease', resolvedType: 'EASING' },
@@ -56,23 +56,33 @@ const styleParams = (props: Record<string, unknown>) => ({
   config: { props },
 });
 
-const REMEDY = /create_variable.*set_variable_value.*get_variable_defs/;
+const REMEDY = /create_variable.*set_variable_value/;
 
 const BAD: [string, 'track' | 'style', Record<string, unknown>, RegExp][] = [
-  ['keyframe easing → TIMING', 'track', trackParams(alias('V:time')), /TIMING.*EASING.*LINEAR/],
-  ['keyframe easing → FLOAT', 'track', trackParams(alias('V:float')), /FLOAT.*EASING.*LINEAR/],
-  ['keyframe easing → missing', 'track', trackParams(alias('V:gone')), /does not exist.*LINEAR/],
-  ['props.easing → TIMING', 'style', styleParams({ easing: alias('V:time') }), /EASING.*LINEAR/],
-  ['props.easing → FLOAT', 'style', styleParams({ easing: alias('V:float') }), /EASING.*LINEAR/],
+  [
+    'keyframe easing → TIMING',
+    'track',
+    trackParams(alias('V:time')),
+    /a TIMING variable.*an EASING/,
+  ],
+  [
+    'keyframe easing → FLOAT',
+    'track',
+    trackParams(alias('V:float')),
+    /a FLOAT variable.*an EASING/,
+  ],
+  ['keyframe easing → missing', 'track', trackParams(alias('V:gone')), /does not exist.*EASING/],
+  ['props.easing → TIMING', 'style', styleParams({ easing: alias('V:time') }), /takes an EASING/],
+  ['props.easing → FLOAT', 'style', styleParams({ easing: alias('V:float') }), /takes an EASING/],
   ['props.easing → missing', 'style', styleParams({ easing: alias('V:gone') }), /does not exist/],
-  ['props.delay → FLOAT', 'style', styleParams({ delay: alias('V:float') }), /TIMING.*not apply/],
-  ['props.delay → EASING', 'style', styleParams({ delay: alias('V:ease') }), /TIMING.*not apply/],
+  ['props.delay → FLOAT', 'style', styleParams({ delay: alias('V:float') }), /takes a TIMING/],
+  ['props.delay → EASING', 'style', styleParams({ delay: alias('V:ease') }), /takes a TIMING/],
   ['props.delay → missing', 'style', styleParams({ delay: alias('V:gone') }), /does not exist/],
   [
     'props.duration → FLOAT',
     'style',
     styleParams({ duration: alias('V:float') }),
-    /TIMING.*not apply/,
+    /takes a TIMING/,
   ],
 ];
 
@@ -101,7 +111,7 @@ describe('Motion variable aliases', () => {
     const { figmaCtx, mutations } = makeFigma();
     await expect(
       createApplyAnimationStyleHandler(figmaCtx)(styleParams({ distance: alias('V:gone') })),
-    ).rejects.toThrow(/config\.props\.distance.*does not exist.*create_variable/);
+    ).rejects.toThrow(/config\.props\.distance.*does not exist.*get_variable_defs/);
     for (const mutation of mutations) expect(mutation).not.toHaveBeenCalled();
   });
 
