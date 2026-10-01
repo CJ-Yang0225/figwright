@@ -26,6 +26,8 @@ const makeFigma = () => {
   };
   const figmaCtx = {
     editorType: 'figma',
+    // batch snapshots every page's prototype flows before applying, so it reads root.children.
+    root: { children: [] },
     getNodeByIdAsync: async (id: string) => (id === '1:1' ? node : null),
     variables: { getVariableByIdAsync: async (id: string) => VARIABLES[id] ?? null },
   } as unknown as typeof figma;
